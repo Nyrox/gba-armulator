@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 bytemuck="*"
 derivative="2.1.1"
+num-traits="*"
