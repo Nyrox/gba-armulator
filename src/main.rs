@@ -2,6 +2,7 @@
 #![feature(box_syntax)]
 #![feature(exclusive_range_pattern)]
 #![allow(incomplete_features)]
+#![allow(unused_unsafe)]
 
 use bytemuck;
 use derivative::Derivative;
@@ -9,6 +10,13 @@ use std::fmt;
 use std::fs;
 use std::io::prelude::*;
 use std::mem;
+
+pub mod bitutils;
+pub mod arm;
+
+use bitutils::*;
+use arm::prelude::*;
+
 
 #[derive(Copy, Clone)]
 struct SmallAsciiString<const N: usize> {
@@ -69,11 +77,6 @@ struct RomHeader {
     _reserved2: [u8; 2], // should be zero filled
 }
 
-fn sign_extend32(data: u32, size: u32) -> i32 {
-    assert!(size > 0 && size <= 32);
-    ((data << (32 - size)) as i32) >> (32 - size)
-}
-
 struct DebugIsHex<T> {
     inner: T,
 }
@@ -131,7 +134,7 @@ impl Memory {
     pub fn index(&self, address: u32) -> Result<*const u8, MemoryError> {
         unsafe {
             match address {
-                0..0x00003FFF => Ok(self.system_rom.as_ptr().offset(address as isize - 0)),
+                0..=0x00003FFF => Ok(self.system_rom.as_ptr().offset(address as isize - 0)),
                 0x03000000..0x03007FFF => {
                     Ok(self.wram_32.as_ptr().offset(address as isize - 0x03000000))
                 }
@@ -148,26 +151,131 @@ impl Memory {
     }
 }
 
-use num_traits::{Zero, One};
 
-fn get_bit<T>(num: T, bit: T) -> bool where T: num_traits::PrimInt {
-    let b = (num >> bit.to_usize().unwrap()) & One::one();
-    b == One::one()
-}
-
-fn get_bits<T>(num: T, offset: T, len: T) -> T where T: num_traits::PrimInt {
-    (num >> offset.to_usize().unwrap()) & !(!T::zero() << len.to_usize().unwrap())
-}
 
 fn main() {
-    let mut rom: Vec<u8> = {
-        let mut rom_buffer = Vec::new();
-        let mut rom_file =
-            fs::File::open(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
-        // let mut rom_file = fs::File::open(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
-        rom_file.read_to_end(&mut rom_buffer).unwrap();
-        rom_buffer
-    };
+    unsafe { _main() }
+}
+
+
+#[derive(Clone, Copy, Debug)]
+enum ProcessorMode {
+    User,
+    FIQ,
+    IRQ,
+    Supervisor,
+    Abort,
+    Undefined,
+    System,
+}
+
+fn full_bank_index(mode: ProcessorMode) -> usize {
+    use ProcessorMode::*;
+    match mode {
+        User | System => 0,
+        FIQ => 1,
+        IRQ => 2,
+        Supervisor => 3,
+        Abort => 4,
+        Undefined => 5,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Registers {
+    unbanked: [u32; 8],
+    single_banked: [[u32; 5]; 2],
+    fully_banked: [[u32; 2]; 6],
+    pc: u32,
+}
+
+impl Registers {
+    pub fn zeroed() -> Self {
+        Registers {
+            unbanked: [0; 8],
+            single_banked: [[0; 5]; 2],
+            fully_banked: [[0; 2]; 6],
+            pc: 0,
+        }
+    }
+
+    pub fn index(&self, i: usize, mode: ProcessorMode) -> &u32 {
+        match i {
+            0..=7 => &self.unbanked[i],
+            8..=12 => match mode {
+                ProcessorMode::FIQ => &self.single_banked[1][i - 8],
+                _ => &self.single_banked[0][i - 8]
+            },
+            13 | 14 => &self.fully_banked[full_bank_index(mode)][i - 13],
+            15 => &self.pc,
+            _ => panic!()
+        }
+    }
+
+    pub fn index_mut(&mut self, i: usize, mode: ProcessorMode) -> &mut u32 {
+        match i {
+            0..=7 => &mut self.unbanked[i],
+            8..=12 => match mode {
+                ProcessorMode::FIQ => &mut self.single_banked[1][i - 8],
+                _ => &mut self.single_banked[0][i - 8]
+            },
+            13 | 14 => &mut self.fully_banked[full_bank_index(mode)][i - 13],
+            15 => &mut self.pc,
+            _ => panic!()
+        }
+    }
+
+    pub fn list(&self, mode: ProcessorMode) -> [u32; 16] {
+        let mut out = [0; 16];
+
+        for i in 0..16 {
+            out[i] = *self.index(i, mode);
+        }
+
+        out
+    }
+}
+
+type SPSR = u32;
+
+#[derive(Clone, Default, Debug)]
+struct SPSRFlags {
+    supervisor: SPSR,
+    irq: SPSR,
+    abort: SPSR,
+}
+
+impl SPSRFlags {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn get_for(&self, mode: ProcessorMode) -> &SPSR {
+        match mode {
+            ProcessorMode::Supervisor => &self.supervisor,
+            ProcessorMode::IRQ => &self.irq,
+            ProcessorMode::Abort => &self.abort,
+            _ => panic!(format!("Attempted to retrieve SPSR for invalid mode: {:?}", mode))
+        }
+    }
+
+    pub fn get_for_mut(&mut self, mode: ProcessorMode) -> &mut SPSR {
+        match mode {
+            ProcessorMode::Supervisor => &mut self.supervisor,
+            ProcessorMode::IRQ => &mut self.irq,
+            ProcessorMode::Abort => &mut self.abort,
+            _ => panic!(format!("Attempted to retrieve SPSR for invalid mode: {:?}", mode))
+        }
+    }
+}
+
+
+unsafe fn _main() {
+    let mut bios = fs::read(r"./gba_bios.bin").unwrap();
+    let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
+    // let mut rom = fs:read(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
+
+    assert_eq!(bios.len(), 16 * 1024);
 
     let mut memory = box Memory::with_rom(rom);
 
@@ -176,56 +284,116 @@ fn main() {
 
     println!("{:#?}", header);
 
-    let mut registers: [u32; 16] = [0; 16];
-    let mut cpsr_flags: [u8; 4] = [0; 4];
-    let mut spsr_flags: [u8; 4] = [0; 4];
+    // load bios
+    for i in 0..bios.len() {
+        *memory.index_mut(i as u32).unwrap() = bios[i];
+    }
+
+    let mut registers = Registers::zeroed();
+    let mut processor_mode = ProcessorMode::User;
+
+    let mut spsr_flags = SPSRFlags::new();
+
+    let mut cpsr_flags: SPSR = 0;
 
     let mut pc: &mut u32 = unsafe {
-        let ptr: *mut u32 = &mut registers[15] as *mut u32;
+        let ptr: *mut u32 = registers.index_mut(15, processor_mode) as *mut u32;
         &mut *ptr
     };
 
     *pc = 0x08000000;
     loop {
-        let is_thumb_mode = |f: u8| {
-            (f >> 5) & 1 == 1
-        };
-        if is_thumb_mode(cpsr_flags[0]) {
-            let instruction = unsafe {
-                *(memory.index(*pc).unwrap() as *const u16)
-            };
+        let is_thumb_mode = |f: u8| (f >> 5) & 1 == 1;
+        if is_thumb_mode(cpsr_flags as u8) {
+            let instruction = unsafe { *(memory.index(*pc).unwrap() as *const u16) };
 
+            let _registerPrinted = registers.list(processor_mode).iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
+            dbg!(_registerPrinted);
+            dbg!(hex!(instruction));
             dbg!(format!("0x{:x}", *pc));
+
+            let instruction = parse_thumb_instruction(instruction);
+            dbg!(instruction.clone());
+
             *pc = *pc + 4;
 
+            use ThumbInstruction::*;
             // do shit
-            match get_bits(instruction, 13, 3) {
-                0b000 => {
-                    let opcode = get_bits(instruction, 11, 2);
-                    match opcode {
-                        0b11 => {
+            match instruction {
+                Push(r_bit, r_list) => {
+                    let r_count = r_list.count_ones() + r_bit as u32;
+                    let mut start_address = registers.index(13, processor_mode) - r_count * 4;
 
-                        },
-                        _ => unimplemented!()
+                    for i in 0..8 {
+                        if get_bit(r_list, i) {
+                            *(memory.index(start_address).unwrap() as *mut u32) =
+                                *registers.index(i as usize, processor_mode);
+                            start_address += 4;
+                        }
                     }
+                    if r_bit {
+                        *(memory.index(start_address).unwrap() as *mut u32) = *registers.index(14, processor_mode);
+                    }
+
+                    *registers.index_mut(13, processor_mode) -= 4 * r_count;
+                },
+                BranchLong { h, offset_11 } => {
+                    match h {
+                        0b10 => {
+                            *registers.index_mut(14, processor_mode) = ((*pc as i32) + (sign_extend32(offset_11 as u32, 11) << 12)) as u32;
+                        }
+                        0b11 => {
+                            let _pc = *pc;
+                            *pc = *registers.index(14, processor_mode) + (offset_11 << 1) as u32;
+                            *registers.index_mut(14, processor_mode) = _pc - 2;
+                            continue;
+                        }
+                        0b01 => {
+                            unimplemented!()
+                        }
+                        _ => unreachable!()
+                    }
+                },
+                SWI(immed_8) => {
+                    // set up return
+                    *registers.index_mut(14, ProcessorMode::Supervisor) = *pc - 2;
+                    *spsr_flags.get_for_mut(ProcessorMode::Supervisor) = cpsr_flags;
+
+                    cpsr_flags = set_bits(cpsr_flags, 0, 5, 0b10011); // supervisor mode
+                    cpsr_flags = set_bits(cpsr_flags, 5, 1, 0); // arm state
+                    cpsr_flags = set_bits(cpsr_flags, 7, 1, 1); // disable interrupts
+                    
+                    // TOODO: Figure out high vectors?
+                    *pc = 0x08;
+                    processor_mode = ProcessorMode::Supervisor;
+                    continue;
+                },
+                Mov { h1, h2, rd, rm } => {
+                    let rd = (h1 as u8) << 3 | rd;
+                    let rm = (h2 as u8) << 3 | rm;
+
+                    *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode);
+                },
+                MovImmed { rd, immed } => {
+                    *registers.index_mut(rd as usize, processor_mode) = immed as u32;
                 }
-                _ => unimplemented!()
+                _ => unimplemented!(),
             }
 
             *pc = *pc - 2;
             continue;
-        } 
+        }
 
         //
         //  END OF THUMB MODE
-        // 
+        //
 
         print!("\n");
         let instruction = unsafe { *(memory.index(*pc).unwrap() as *const u32) };
 
         *pc = *pc + 8;
 
-        let _registerPrinted = registers.iter().map(|e| hex!(e)).collect::<Vec<_>>();
+        let _registerPrinted = registers.list(processor_mode).into_iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
         dbg!(_registerPrinted);
         dbg!(cpsr_flags);
         dbg!(format!("0x{:x}", (*pc) - 8));
@@ -251,7 +419,6 @@ fn main() {
             panic!()
         }
 
-
         match op_block {
             // branch
             _ if ((op_block & 0xF0) >> 4) == 0b1010 => {
@@ -274,9 +441,10 @@ fn main() {
                 let rm = get_bits(instruction, 0, 4);
                 let t_flag = get_bits(rm, 0, 1);
                 dbg!(t_flag);
-                cpsr_flags[0] = (cpsr_flags[0] & 0b11011111) | (t_flag << 5) as u8;             
-                *pc = registers[rm as usize] & !1;
- 
+                // fixme
+                cpsr_flags = set_bits(cpsr_flags, 0, 8, (cpsr_flags & 0b11011111) | (t_flag << 5) as u32);
+                *pc = *registers.index(rm as usize, processor_mode) & !1;
+
                 continue;
             }
             // register to status register
@@ -287,15 +455,15 @@ fn main() {
                 let field_mask = (instruction & 0xF0000) >> 16;
                 dbg!(field_mask);
 
-                let operand = registers[(instruction & 0xF) as usize];
+                let operand = *registers.index((instruction & 0xF) as usize, processor_mode);
 
                 if r_bit {
                     unimplemented!()
                 }
 
                 for i in 0..=3 {
-                    if get_bit(field_mask, i as u32) {
-                        cpsr_flags[i] = ((operand >> (i * 8)) & 0xFF) as u8;
+                    if get_bit(field_mask, i as usize) {
+                        cpsr_flags = set_bits(cpsr_flags, i, 8, ((operand >> (i * 8)) & 0xFF) as u32);
                     }
                 }
             }
@@ -327,7 +495,7 @@ fn main() {
                             unimplemented!()
                         }
 
-                        registers[rd as usize] = registers[rm as usize] << shift_imm;
+                        *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode) << shift_imm;
                     }
                     _ => unimplemented!(),
                 }
@@ -358,7 +526,7 @@ fn main() {
                             unimplemented!()
                         }
 
-                        registers[rd as usize] = immed_8 >> rotate;
+                        *registers.index_mut(rd as usize, processor_mode) = immed_8 >> rotate;
                     }
                     // add
                     0b0100 => {
@@ -374,7 +542,7 @@ fn main() {
 
                         dbg!(rd, rn, immed_8, rotate);
 
-                        registers[rd as usize] = registers[rn as usize] + (immed_8 >> rotate);
+                        *registers.index_mut(rd as usize, processor_mode) = *registers.index(rn as usize, processor_mode) + (immed_8 >> rotate);
                     }
                     _ => unimplemented!(),
                 }
@@ -397,7 +565,7 @@ fn main() {
                 }
 
                 let offset = get_bits(instruction, 0, 12);
-                let base = registers[rn as usize];
+                let base = *registers.index(rn as usize, processor_mode);
 
                 let address = match get_bit(instruction, 23) {
                     true => base + offset,
@@ -407,9 +575,9 @@ fn main() {
                 let mem_loc = memory.index_mut(address).unwrap() as *mut u32;
                 unsafe {
                     if load {
-                        registers[rd as usize] = *mem_loc;
+                        *registers.index_mut(rd as usize, processor_mode) = *mem_loc;
                     } else {
-                        *mem_loc = registers[rd as usize];
+                        *mem_loc = *registers.index(rd as usize, processor_mode);
                     }
                 }
             }
@@ -419,3 +587,4 @@ fn main() {
         *pc = *pc - 4;
     }
 }
+
