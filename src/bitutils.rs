@@ -31,3 +31,27 @@ pub fn sign_extend32(data: u32, size: u32) -> i32 {
     assert!(size > 0 && size <= 32);
     ((data << (32 - size)) as i32) >> (32 - size)
 }
+
+
+
+pub struct DebugIsHex<T> {
+    pub inner: T,
+}
+
+impl<T> std::fmt::Debug for DebugIsHex<T>
+where
+    T: std::fmt::LowerHex,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_fmt(format_args!("0x{:x}", self.inner))
+    }
+}
+
+#[macro_export]
+macro_rules! hex {
+    ($id: ident) => {
+        DebugIsHex { inner: $id }
+    };
+}
+
+pub use hex;

@@ -77,25 +77,6 @@ struct RomHeader {
     _reserved2: [u8; 2], // should be zero filled
 }
 
-struct DebugIsHex<T> {
-    inner: T,
-}
-
-impl<T> std::fmt::Debug for DebugIsHex<T>
-where
-    T: std::fmt::LowerHex,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_fmt(format_args!("0x{:x}", self.inner))
-    }
-}
-
-macro_rules! hex {
-    ($id: ident) => {
-        DebugIsHex { inner: $id }
-    };
-}
-
 struct Memory {
     pub system_rom: [u8; 16 * 1024],
     pub wram_256: [u8; 256 * 1024],
@@ -271,6 +252,10 @@ impl SPSRFlags {
 
 
 unsafe fn _main() {
+    const LR: usize = 14;
+    const SP: usize = 13;
+
+
     let mut bios = fs::read(r"./gba_bios.bin").unwrap();
     let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
     // let mut rom = fs:read(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
@@ -389,36 +374,61 @@ unsafe fn _main() {
         //
 
         print!("\n");
+        
+        dbg!(cpsr_flags);
+        let _registers_printed = registers.list(processor_mode).iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
+        dbg!(_registers_printed);
+        
+
+        
         let instruction = unsafe { *(memory.index(*pc).unwrap() as *const u32) };
+        dbg!(hex!(instruction));
 
         *pc = *pc + 8;
-
-        let _registerPrinted = registers.list(processor_mode).into_iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
-        dbg!(_registerPrinted);
-        dbg!(cpsr_flags);
         dbg!(format!("0x{:x}", (*pc) - 8));
 
-        let instr_bytes = bytemuck::bytes_of(&instruction);
+        let (cond_flags, instruction) = parse_instruction(instruction);
+        dbg!(instruction);
 
-        let cond_block = instr_bytes[3] & 0b11110000;
-
-        dbg!(format!("{:#b}", instruction));
-
-        let op_block = (instruction & 0x0FF00000) >> 20 as u8;
-        dbg!(format!("{:08b}", op_block));
-
-        let cond = match cond_block >> 4 {
-            0b1110 => true,
-            _ => {
-                println!("{:b}", cond_block);
-                unimplemented!()
-            }
+        match cond_flags {
+            CondFlags::Always => (),
+            _ => unimplemented!()
         };
 
-        if !cond {
-            panic!()
+        use Instruction::*;
+        match instruction {
+            Branch { link, signed_immed_24 } => {
+                if link { *registers.index_mut(LR, processor_mode) = *pc - 4; }
+                *pc = (*pc as i32 + sign_extend32(signed_immed_24 << 2, 26)) as u32;
+                continue;
+            }
+            DataProcessingImmediate { s, opcode, rn, rd, rotate, immediate } => {
+                let shifter_operand = immediate >> rotate;
+                match opcode {
+                    OpCode::MOV => {
+                        *registers.index_mut(rd as usize, processor_mode) = shifter_operand as u32 >> rotate as usize;
+                    }
+                    _ => unimplemented!()
+                }
+            },
+            MoveRegisterToStatusRegister { r, field_mask, sbo, sbz, rm } => {
+                let operand = *registers.index(rm as usize, processor_mode);
+                let psr = if r {
+                    spsr_flags.get_for_mut(processor_mode)
+                } else {
+                    &mut cpsr_flags
+                };
+
+                for i in 0..4 {
+                    if get_bit(field_mask, i) {
+                        *psr = set_bits(*psr, i * 8, 8, get_bits(operand, i * 8, 8));
+                    }
+                }
+            }
+            _ => unimplemented!()
         }
 
+/*
         match op_block {
             // branch
             _ if ((op_block & 0xF0) >> 4) == 0b1010 => {
@@ -583,7 +593,7 @@ unsafe fn _main() {
             }
             _ => unimplemented!(),
         }
-
+*/
         *pc = *pc - 4;
     }
 }
