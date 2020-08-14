@@ -11,12 +11,11 @@ use std::fs;
 use std::io::prelude::*;
 use std::mem;
 
-pub mod bitutils;
 pub mod arm;
+pub mod bitutils;
 
-use bitutils::*;
 use arm::prelude::*;
-
+use bitutils::*;
 
 #[derive(Copy, Clone)]
 struct SmallAsciiString<const N: usize> {
@@ -81,6 +80,7 @@ struct Memory {
     pub system_rom: [u8; 16 * 1024],
     pub wram_256: [u8; 256 * 1024],
     pub wram_32: [u8; 32 * 1024],
+	pub io_regs: [u8; 16 * 1024],
     pub rom: Vec<u8>,
 }
 
@@ -90,6 +90,7 @@ impl std::default::Default for Memory {
             system_rom: [0; 16 * 1024],
             wram_256: [0; 256 * 1024],
             wram_32: [0; 32 * 1024],
+			io_regs: [0; 16 * 1024],
             rom: Vec::new(),
         }
     }
@@ -112,14 +113,30 @@ impl Memory {
         }
     }
 
+    pub fn read_word(&self, address: u32) -> Result<u32, MemoryError> {
+        let ptr = self.index(address)?;
+        Ok(unsafe { *(ptr as *const u32) })
+    }
+
+    pub fn write_word(&mut self, address: u32, word: u32) -> Result<(), MemoryError> {
+        let ptr = self.index_mut(address)?;
+        unsafe {
+            *(ptr as *mut u32) = word;
+        }
+        Ok(())
+    }
+
     pub fn index(&self, address: u32) -> Result<*const u8, MemoryError> {
         unsafe {
             match address {
                 0..=0x00003FFF => Ok(self.system_rom.as_ptr().offset(address as isize - 0)),
-                0x03000000..0x03007FFF => {
+                0x03000000..=0x03007FFF => {
                     Ok(self.wram_32.as_ptr().offset(address as isize - 0x03000000))
                 }
-                0x08000000..0x09FFFFFF => {
+				0x04000000..=0x04000FFF => {
+					Ok(self.io_regs.as_ptr().offset(address as isize - 0x04000000))
+				}
+                0x08000000..=0x09FFFFFF => {
                     Ok(self.rom.as_ptr().offset(address as isize - 0x08000000))
                 }
                 _ => Err(MemoryError::OutOfRange(hex!(address))),
@@ -132,12 +149,9 @@ impl Memory {
     }
 }
 
-
-
 fn main() {
     unsafe { _main() }
 }
-
 
 #[derive(Clone, Copy, Debug)]
 enum ProcessorMode {
@@ -185,11 +199,11 @@ impl Registers {
             0..=7 => &self.unbanked[i],
             8..=12 => match mode {
                 ProcessorMode::FIQ => &self.single_banked[1][i - 8],
-                _ => &self.single_banked[0][i - 8]
+                _ => &self.single_banked[0][i - 8],
             },
             13 | 14 => &self.fully_banked[full_bank_index(mode)][i - 13],
             15 => &self.pc,
-            _ => panic!()
+            _ => panic!(),
         }
     }
 
@@ -198,11 +212,11 @@ impl Registers {
             0..=7 => &mut self.unbanked[i],
             8..=12 => match mode {
                 ProcessorMode::FIQ => &mut self.single_banked[1][i - 8],
-                _ => &mut self.single_banked[0][i - 8]
+                _ => &mut self.single_banked[0][i - 8],
             },
             13 | 14 => &mut self.fully_banked[full_bank_index(mode)][i - 13],
             15 => &mut self.pc,
-            _ => panic!()
+            _ => panic!(),
         }
     }
 
@@ -236,7 +250,10 @@ impl SPSRFlags {
             ProcessorMode::Supervisor => &self.supervisor,
             ProcessorMode::IRQ => &self.irq,
             ProcessorMode::Abort => &self.abort,
-            _ => panic!(format!("Attempted to retrieve SPSR for invalid mode: {:?}", mode))
+            _ => panic!(format!(
+                "Attempted to retrieve SPSR for invalid mode: {:?}",
+                mode
+            )),
         }
     }
 
@@ -245,22 +262,21 @@ impl SPSRFlags {
             ProcessorMode::Supervisor => &mut self.supervisor,
             ProcessorMode::IRQ => &mut self.irq,
             ProcessorMode::Abort => &mut self.abort,
-            _ => panic!(format!("Attempted to retrieve SPSR for invalid mode: {:?}", mode))
+            _ => panic!(format!(
+                "Attempted to retrieve SPSR for invalid mode: {:?}",
+                mode
+            )),
         }
     }
 }
-
 
 unsafe fn _main() {
     const LR: usize = 14;
     const SP: usize = 13;
 
-
-    let mut bios = fs::read(r"./gba_bios.bin").unwrap();
-    let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
+    // let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
     // let mut rom = fs:read(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
-
-    assert_eq!(bios.len(), 16 * 1024);
+    let mut rom = fs::read(r"./armwrestler-gba-fixed.gba").unwrap();
 
     let mut memory = box Memory::with_rom(rom);
 
@@ -270,9 +286,11 @@ unsafe fn _main() {
     println!("{:#?}", header);
 
     // load bios
-    for i in 0..bios.len() {
-        *memory.index_mut(i as u32).unwrap() = bios[i];
-    }
+    // let mut bios = fs::read(r"./gba_bios.bin").unwrap();
+    // assert_eq!(bios.len(), 16 * 1024);
+    // for i in 0..bios.len() {
+    //     *memory.index_mut(i as u32).unwrap() = bios[i];
+    // }
 
     let mut registers = Registers::zeroed();
     let mut processor_mode = ProcessorMode::User;
@@ -292,7 +310,12 @@ unsafe fn _main() {
         if is_thumb_mode(cpsr_flags as u8) {
             let instruction = unsafe { *(memory.index(*pc).unwrap() as *const u16) };
 
-            let _registerPrinted = registers.list(processor_mode).iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
+            let _registerPrinted = registers
+                .list(processor_mode)
+                .iter()
+                .cloned()
+                .map(|e| hex!(e))
+                .collect::<Vec<_>>();
             dbg!(_registerPrinted);
             dbg!(hex!(instruction));
             dbg!(format!("0x{:x}", *pc));
@@ -317,27 +340,25 @@ unsafe fn _main() {
                         }
                     }
                     if r_bit {
-                        *(memory.index(start_address).unwrap() as *mut u32) = *registers.index(14, processor_mode);
+                        *(memory.index(start_address).unwrap() as *mut u32) =
+                            *registers.index(14, processor_mode);
                     }
 
                     *registers.index_mut(13, processor_mode) -= 4 * r_count;
-                },
-                BranchLong { h, offset_11 } => {
-                    match h {
-                        0b10 => {
-                            *registers.index_mut(14, processor_mode) = ((*pc as i32) + (sign_extend32(offset_11 as u32, 11) << 12)) as u32;
-                        }
-                        0b11 => {
-                            let _pc = *pc;
-                            *pc = *registers.index(14, processor_mode) + (offset_11 << 1) as u32;
-                            *registers.index_mut(14, processor_mode) = _pc - 2;
-                            continue;
-                        }
-                        0b01 => {
-                            unimplemented!()
-                        }
-                        _ => unreachable!()
+                }
+                BranchLong { h, offset_11 } => match h {
+                    0b10 => {
+                        *registers.index_mut(14, processor_mode) =
+                            ((*pc as i32) + (sign_extend32(offset_11 as u32, 11) << 12)) as u32;
                     }
+                    0b11 => {
+                        let _pc = *pc;
+                        *pc = *registers.index(14, processor_mode) + (offset_11 << 1) as u32;
+                        *registers.index_mut(14, processor_mode) = _pc - 2;
+                        continue;
+                    }
+                    0b01 => unimplemented!(),
+                    _ => unreachable!(),
                 },
                 SWI(immed_8) => {
                     // set up return
@@ -347,18 +368,19 @@ unsafe fn _main() {
                     cpsr_flags = set_bits(cpsr_flags, 0, 5, 0b10011); // supervisor mode
                     cpsr_flags = set_bits(cpsr_flags, 5, 1, 0); // arm state
                     cpsr_flags = set_bits(cpsr_flags, 7, 1, 1); // disable interrupts
-                    
+
                     // TOODO: Figure out high vectors?
                     *pc = 0x08;
                     processor_mode = ProcessorMode::Supervisor;
                     continue;
-                },
+                }
                 Mov { h1, h2, rd, rm } => {
                     let rd = (h1 as u8) << 3 | rd;
                     let rm = (h2 as u8) << 3 | rm;
 
-                    *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode);
-                },
+                    *registers.index_mut(rd as usize, processor_mode) =
+                        *registers.index(rm as usize, processor_mode);
+                }
                 MovImmed { rd, immed } => {
                     *registers.index_mut(rd as usize, processor_mode) = immed as u32;
                 }
@@ -374,13 +396,16 @@ unsafe fn _main() {
         //
 
         print!("\n");
-        
-        dbg!(cpsr_flags);
-        let _registers_printed = registers.list(processor_mode).iter().cloned().map(|e| hex!(e)).collect::<Vec<_>>();
-        dbg!(_registers_printed);
-        
 
-        
+        dbg!(cpsr_flags);
+        let _registers_printed = registers
+            .list(processor_mode)
+            .iter()
+            .cloned()
+            .map(|e| hex!(e))
+            .collect::<Vec<_>>();
+        dbg!(_registers_printed);
+
         let instruction = unsafe { *(memory.index(*pc).unwrap() as *const u32) };
         dbg!(hex!(instruction));
 
@@ -392,26 +417,45 @@ unsafe fn _main() {
 
         match cond_flags {
             CondFlags::Always => (),
-            _ => unimplemented!()
+            _ => unimplemented!(),
         };
 
         use Instruction::*;
         match instruction {
-            Branch { link, signed_immed_24 } => {
-                if link { *registers.index_mut(LR, processor_mode) = *pc - 4; }
+            Branch {
+                link,
+                signed_immed_24,
+            } => {
+                if link {
+                    *registers.index_mut(LR, processor_mode) = *pc - 4;
+                }
                 *pc = (*pc as i32 + sign_extend32(signed_immed_24 << 2, 26)) as u32;
                 continue;
             }
-            DataProcessingImmediate { s, opcode, rn, rd, rotate, immediate } => {
-                let shifter_operand = immediate >> rotate;
+            DataProcessingImmediate {
+                s,
+                opcode,
+                rn,
+                rd,
+                rotate,
+                immediate,
+            } => {
+                let shifter_operand = (immediate as u32).rotate_right(rotate as u32 * 2);
                 match opcode {
                     OpCode::MOV => {
-                        *registers.index_mut(rd as usize, processor_mode) = shifter_operand as u32 >> rotate as usize;
+                        dbg!(shifter_operand);
+                        *registers.index_mut(rd as usize, processor_mode) = shifter_operand;
                     }
-                    _ => unimplemented!()
+                    _ => unimplemented!(),
                 }
-            },
-            MoveRegisterToStatusRegister { r, field_mask, sbo, sbz, rm } => {
+            }
+            MoveRegisterToStatusRegister {
+                r,
+                field_mask,
+                sbo,
+                sbz,
+                rm,
+            } => {
                 let operand = *registers.index(rm as usize, processor_mode);
                 let psr = if r {
                     spsr_flags.get_for_mut(processor_mode)
@@ -425,176 +469,231 @@ unsafe fn _main() {
                     }
                 }
             }
-            _ => unimplemented!()
-        }
-
-/*
-        match op_block {
-            // branch
-            _ if ((op_block & 0xF0) >> 4) == 0b1010 => {
-                dbg!("branch");
-                if (cond_block & 0b0001) != 0 {
-                    dbg!("linked branch");
-                }
-                let offset = instruction & 0x00FFFFFF;
-                *pc = (*pc as i32 + sign_extend32(offset << 2, 26)) as u32;
-                continue;
-            }
-            // misc instructions
-            _ if (instruction & 0x0FB000F0) == 0x01000000 => {
-                dbg!("misc");
-
-                unimplemented!()
-            }
-            // BX
-            _ if (instruction & 0x0FF000F0) == 0x01200010 => {
-                let rm = get_bits(instruction, 0, 4);
-                let t_flag = get_bits(rm, 0, 1);
-                dbg!(t_flag);
-                // fixme
-                cpsr_flags = set_bits(cpsr_flags, 0, 8, (cpsr_flags & 0b11011111) | (t_flag << 5) as u32);
-                *pc = *registers.index(rm as usize, processor_mode) & !1;
-
-                continue;
-            }
-            // register to status register
-            _ if (instruction & 0x0FB000F0) == 0x01200000 => {
-                let r_bit = get_bit(instruction, 22);
-                dbg!(r_bit);
-
-                let field_mask = (instruction & 0xF0000) >> 16;
-                dbg!(field_mask);
-
-                let operand = *registers.index((instruction & 0xF) as usize, processor_mode);
-
-                if r_bit {
+            LoadStoreWordOrUnsignedByte_Immediate {
+                p,
+                u,
+                b,
+                w,
+                l,
+                rn,
+                rd,
+                offset_12,
+            } => {
+                if b {
                     unimplemented!()
-                }
+                } // byte access
 
-                for i in 0..=3 {
-                    if get_bit(field_mask, i as usize) {
-                        cpsr_flags = set_bits(cpsr_flags, i, 8, ((operand >> (i * 8)) & 0xFF) as u32);
+                let calc_new_addr = |base, offset: u32| {
+                    if u {
+                        base + offset
+                    } else {
+                        base - offset
                     }
-                }
-            }
-            // some kind of data-processing shift
-            _ if (op_block & 0xE0) == 0x00 => {
-                let opcode = get_bits(instruction, 21, 4);
-                let s_flag = op_block & 0x001;
-                let rd = get_bits(instruction, 12, 4);
-                let rn = get_bits(instruction, 16, 4);
-
-                let register_shift = get_bit(instruction, 4);
-
-                match opcode {
-                    // mov
-                    0b1101 => {
-                        let is_register_shift = get_bit(instruction, 4);
-                        if is_register_shift {
-                            unimplemented!()
-                        }
-                        let shift_mode = get_bits(instruction, 5, 3);
-                        if shift_mode != 0 {
-                            unimplemented!()
-                        }
-
-                        let rm = get_bits(instruction, 0, 4);
-                        let shift_imm = get_bits(instruction, 7, 5);
-
-                        if s_flag != 0 {
-                            unimplemented!()
-                        }
-
-                        *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode) << shift_imm;
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-            // move immediate to status register
-            _ if (op_block & 0xFB) == 0x32 => {
-                dbg!("move immediate to status register");
-                unimplemented!();
-            }
-            // after the previous we know, this bit pattern is data-processing immediate or undefined
-            _ if (op_block & 0xE0) == 0x20 => {
-                dbg!("data processing immediate");
-
-                let opcode = get_bits(instruction, 21, 4);
-                let s_flag = op_block & 0x001;
-
-                dbg!(opcode, s_flag);
-
-                match opcode {
-                    // mov
-                    0b1101 => {
-                        let immed_8 = get_bits(instruction, 0, 8);
-                        let rotate = get_bits(instruction, 8, 4);
-
-                        let rd = get_bits(instruction, 12, 4);
-
-                        if s_flag != 0 {
-                            unimplemented!()
-                        }
-
-                        *registers.index_mut(rd as usize, processor_mode) = immed_8 >> rotate;
-                    }
-                    // add
-                    0b0100 => {
-                        if s_flag != 0 {
-                            unimplemented!()
-                        }
-
-                        let immed_8 = get_bits(instruction, 0, 8);
-                        let rotate = get_bits(instruction, 8, 4);
-
-                        let rd = get_bits(instruction, 12, 4);
-                        let rn = get_bits(instruction, 16, 4);
-
-                        dbg!(rd, rn, immed_8, rotate);
-
-                        *registers.index_mut(rd as usize, processor_mode) = *registers.index(rn as usize, processor_mode) + (immed_8 >> rotate);
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-            // some kind of load/store
-            _ if (op_block & 0xC0) == 0x40 => {
-                // immediate
-                let immediate = !get_bit(instruction, 25);
-                let load = get_bit(instruction, 20);
-                let is_byte = get_bit(instruction, 22);
-
-                let rd = get_bits(instruction, 12, 4);
-                let rn = get_bits(instruction, 16, 4);
-
-                if is_byte {
-                    unimplemented!()
-                }
-                if !immediate {
-                    unimplemented!()
-                }
-
-                let offset = get_bits(instruction, 0, 12);
-                let base = *registers.index(rn as usize, processor_mode);
-
-                let address = match get_bit(instruction, 23) {
-                    true => base + offset,
-                    false => base - offset,
                 };
 
-                let mem_loc = memory.index_mut(address).unwrap() as *mut u32;
-                unsafe {
-                    if load {
-                        *registers.index_mut(rd as usize, processor_mode) = *mem_loc;
-                    } else {
-                        *mem_loc = *registers.index(rd as usize, processor_mode);
+                let address = if p {
+                    let base = *registers.index(rn as usize, processor_mode);
+                    let address = calc_new_addr(base, offset_12 as u32);
+
+                    // writeback
+                    if w {
+                        *registers.index_mut(rn as usize, processor_mode) = address;
                     }
+
+                    address
+                } else {
+                    let address = *registers.index(rn as usize, processor_mode);
+                    if w {
+                        unimplemented!()
+                    } // unpriviliged access?
+
+                    // increment base register
+                    *registers.index_mut(rn as usize, processor_mode) = calc_new_addr(
+                        *registers.index(rn as usize, processor_mode),
+                        offset_12 as u32,
+                    );
+
+                    // ret old address
+                    address
+                };
+
+                if l {
+                    *registers.index_mut(rd as usize, processor_mode) =
+                        memory.read_word(address).unwrap();
+                } else {
+                    let val = *registers.index(rd as usize, processor_mode);
+                    memory.write_word(address, val).unwrap();
                 }
             }
             _ => unimplemented!(),
         }
-*/
+
+        /*
+                match op_block {
+                    // branch
+                    _ if ((op_block & 0xF0) >> 4) == 0b1010 => {
+                        dbg!("branch");
+                        if (cond_block & 0b0001) != 0 {
+                            dbg!("linked branch");
+                        }
+                        let offset = instruction & 0x00FFFFFF;
+                        *pc = (*pc as i32 + sign_extend32(offset << 2, 26)) as u32;
+                        continue;
+                    }
+                    // misc instructions
+                    _ if (instruction & 0x0FB000F0) == 0x01000000 => {
+                        dbg!("misc");
+
+                        unimplemented!()
+                    }
+                    // BX
+                    _ if (instruction & 0x0FF000F0) == 0x01200010 => {
+                        let rm = get_bits(instruction, 0, 4);
+                        let t_flag = get_bits(rm, 0, 1);
+                        dbg!(t_flag);
+                        // fixme
+                        cpsr_flags = set_bits(cpsr_flags, 0, 8, (cpsr_flags & 0b11011111) | (t_flag << 5) as u32);
+                        *pc = *registers.index(rm as usize, processor_mode) & !1;
+
+                        continue;
+                    }
+                    // register to status register
+                    _ if (instruction & 0x0FB000F0) == 0x01200000 => {
+                        let r_bit = get_bit(instruction, 22);
+                        dbg!(r_bit);
+
+                        let field_mask = (instruction & 0xF0000) >> 16;
+                        dbg!(field_mask);
+
+                        let operand = *registers.index((instruction & 0xF) as usize, processor_mode);
+
+                        if r_bit {
+                            unimplemented!()
+                        }
+
+                        for i in 0..=3 {
+                            if get_bit(field_mask, i as usize) {
+                                cpsr_flags = set_bits(cpsr_flags, i, 8, ((operand >> (i * 8)) & 0xFF) as u32);
+                            }
+                        }
+                    }
+                    // some kind of data-processing shift
+                    _ if (op_block & 0xE0) == 0x00 => {
+                        let opcode = get_bits(instruction, 21, 4);
+                        let s_flag = op_block & 0x001;
+                        let rd = get_bits(instruction, 12, 4);
+                        let rn = get_bits(instruction, 16, 4);
+
+                        let register_shift = get_bit(instruction, 4);
+
+                        match opcode {
+                            // mov
+                            0b1101 => {
+                                let is_register_shift = get_bit(instruction, 4);
+                                if is_register_shift {
+                                    unimplemented!()
+                                }
+                                let shift_mode = get_bits(instruction, 5, 3);
+                                if shift_mode != 0 {
+                                    unimplemented!()
+                                }
+
+                                let rm = get_bits(instruction, 0, 4);
+                                let shift_imm = get_bits(instruction, 7, 5);
+
+                                if s_flag != 0 {
+                                    unimplemented!()
+                                }
+
+                                *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode) << shift_imm;
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    // move immediate to status register
+                    _ if (op_block & 0xFB) == 0x32 => {
+                        dbg!("move immediate to status register");
+                        unimplemented!();
+                    }
+                    // after the previous we know, this bit pattern is data-processing immediate or undefined
+                    _ if (op_block & 0xE0) == 0x20 => {
+                        dbg!("data processing immediate");
+
+                        let opcode = get_bits(instruction, 21, 4);
+                        let s_flag = op_block & 0x001;
+
+                        dbg!(opcode, s_flag);
+
+                        match opcode {
+                            // mov
+                            0b1101 => {
+                                let immed_8 = get_bits(instruction, 0, 8);
+                                let rotate = get_bits(instruction, 8, 4);
+
+                                let rd = get_bits(instruction, 12, 4);
+
+                                if s_flag != 0 {
+                                    unimplemented!()
+                                }
+
+                                *registers.index_mut(rd as usize, processor_mode) = immed_8 >> rotate;
+                            }
+                            // add
+                            0b0100 => {
+                                if s_flag != 0 {
+                                    unimplemented!()
+                                }
+
+                                let immed_8 = get_bits(instruction, 0, 8);
+                                let rotate = get_bits(instruction, 8, 4);
+
+                                let rd = get_bits(instruction, 12, 4);
+                                let rn = get_bits(instruction, 16, 4);
+
+                                dbg!(rd, rn, immed_8, rotate);
+
+                                *registers.index_mut(rd as usize, processor_mode) = *registers.index(rn as usize, processor_mode) + (immed_8 >> rotate);
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    // some kind of load/store
+                    _ if (op_block & 0xC0) == 0x40 => {
+                        // immediate
+                        let immediate = !get_bit(instruction, 25);
+                        let load = get_bit(instruction, 20);
+                        let is_byte = get_bit(instruction, 22);
+
+                        let rd = get_bits(instruction, 12, 4);
+                        let rn = get_bits(instruction, 16, 4);
+
+                        if is_byte {
+                            unimplemented!()
+                        }
+                        if !immediate {
+                            unimplemented!()
+                        }
+
+                        let offset = get_bits(instruction, 0, 12);
+                        let base = *registers.index(rn as usize, processor_mode);
+
+                        let address = match get_bit(instruction, 23) {
+                            true => base + offset,
+                            false => base - offset,
+                        };
+
+                        let mem_loc = memory.index_mut(address).unwrap() as *mut u32;
+                        unsafe {
+                            if load {
+                                *registers.index_mut(rd as usize, processor_mode) = *mem_loc;
+                            } else {
+                                *mem_loc = *registers.index(rd as usize, processor_mode);
+                            }
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+        */
         *pc = *pc - 4;
     }
 }
-

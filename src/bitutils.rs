@@ -32,8 +32,6 @@ pub fn sign_extend32(data: u32, size: u32) -> i32 {
     ((data << (32 - size)) as i32) >> (32 - size)
 }
 
-
-
 pub struct DebugIsHex<T> {
     pub inner: T,
 }

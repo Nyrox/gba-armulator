@@ -1,3 +1,4 @@
 /target
 /roms
 gba_bios.bin
+*.sav

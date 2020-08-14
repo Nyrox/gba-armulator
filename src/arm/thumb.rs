@@ -1,6 +1,4 @@
-
 use crate::bitutils::*;
-
 
 #[derive(Clone, Debug)]
 pub enum ThumbInstruction {
@@ -26,9 +24,12 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
         0b10111101 => Pop(true, arg_byte),
         0b11011111 => SWI(arg_byte),
         // mov immed
-        0b00100000 .. 0b00100111 => MovImmed { rd: opcode & 0x07, immed: arg_byte },
+        0b00100000..0b00100111 => MovImmed {
+            rd: opcode & 0x07,
+            immed: arg_byte,
+        },
         // BL, BLX
-        0b11100000 .. 0b11111111 => BranchLong {
+        0b11100000..0b11111111 => BranchLong {
             h: get_bits(instr, 11, 2) as u8,
             offset_11: get_bits(instr, 0, 11) as u16,
         },
