@@ -5,9 +5,13 @@ pub enum ThumbInstruction {
     Push(bool, u8),
     Pop(bool, u8),
     SWI(u8),
+    ShiftByIMmediate { opcode: u8, immediate: u8, rm: u8, rd: u8 },
+    ConditionalBranch { cond: u8, offset: u8 },
     BranchLong { h: u8, offset_11: u16 },
     Mov { h1: bool, h2: bool, rm: u8, rd: u8 },
     MovImmed { rd: u8, immed: u8 },
+    LoadWordPCRelative { rd: u8, immed_8: u8 },
+    LoadStoreHalfwordImmediateOffset { l: bool, offset: u8, rn: u8, rd: u8 },
     Undefined,
 }
 
@@ -18,6 +22,12 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
     let arg_byte = instr as u8;
 
     match opcode {
+        0b00000000..0b00010111 => ShiftByIMmediate {
+            opcode: get_bits(instr, 11, 2) as u8,
+            immediate: get_bits(instr, 6, 5) as u8,
+            rm: get_bits(instr, 3, 3) as u8,
+            rd: get_bits(instr, 0, 3) as u8,
+        },
         0b10110100 => Push(false, arg_byte),
         0b10110101 => Push(true, arg_byte),
         0b10111100 => Pop(false, arg_byte),
@@ -27,6 +37,20 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
         0b00100000..0b00100111 => MovImmed {
             rd: opcode & 0x07,
             immed: arg_byte,
+        },
+        0b01001000..0b01001111 => LoadWordPCRelative {
+            rd: get_bits(instr, 8, 3) as u8,
+            immed_8: get_bits(instr, 0, 8) as u8,
+        },
+        0b10000000..0b10001111 => LoadStoreHalfwordImmediateOffset {
+            l: get_bit(instr, 11),
+            offset: get_bits(instr, 6, 5) as u8,
+            rn: get_bits(instr, 3, 3) as u8,
+            rd: get_bits(instr, 3, 3) as u8,
+        },
+        0b11010000..0b11011111 => ConditionalBranch {
+            cond: get_bits(instr, 8, 2) as u8,
+            offset: get_bits(instr, 0, 8) as u8,
         },
         // BL, BLX
         0b11100000..0b11111111 => BranchLong {
@@ -40,6 +64,6 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
             rm: get_bits(arg_byte, 3, 3),
             rd: get_bits(arg_byte, 0, 3),
         },
-        _ => Undefined,
+        _ => unimplemented!(),
     }
 }

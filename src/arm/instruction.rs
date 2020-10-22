@@ -1,9 +1,6 @@
 use crate::bitutils::*;
 
-#[derive(Copy, Clone, Debug)]
-pub enum CondFlags {
-    Always,
-}
+
 
 #[derive(Copy, Clone, Debug)]
 pub enum OpCode {
@@ -76,6 +73,9 @@ pub enum Instruction {
         link: bool,
         signed_immed_24: u32,
     },
+    BranchExchange {
+        rm: u8,
+    },
     MoveImmediateToStatusRegister {
         r: bool,
         field_mask: u8,
@@ -102,6 +102,29 @@ pub enum Instruction {
     },
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum CondFlags {
+    Equal,
+    NotEqual,
+    CarrySet,
+    CarryClear,
+    Always,
+}
+
+pub fn parse_cond_flags(cond_flags: u8) -> CondFlags {
+    match cond_flags {
+        0b0000 => CondFlags::Equal,
+        0b0001 => CondFlags::NotEqual,
+        0b0010 => CondFlags::CarrySet,
+        0b0011 => CondFlags::CarryClear,
+        0b1110 => CondFlags::Always,
+        _ => {
+            dbg!(hex!(cond_flags));
+            unimplemented!()
+        }
+    }
+}
+
 pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
     use Instruction::*;
 
@@ -109,14 +132,9 @@ pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
     let cond_block = get_bits(instr, 28, 4);
 
     dbg!(hex!(instr));
+    dbg!(bin!(instr));
 
-    let cond_flags = match cond_block {
-        0b1110 => CondFlags::Always,
-        _ => {
-            dbg!(hex!(cond_block));
-            unimplemented!()
-        }
-    };
+    let cond_flags = parse_cond_flags(cond_block as u8);
 
     let op = match opblock {
         // 000 block
@@ -130,8 +148,15 @@ pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
             rm: get_bits(instr, 0, 4) as u8,
         },
         // rule out misc. instruction
+        // branch-exchange
+        0x12 if get_bits(instr, 4, 4) == 1 => {
+            BranchExchange {
+                rm: get_bits(instr, 0, 4) as u8,
+            }
+        }
+
         _ if opblock & 0xF9 == 0x10 => unimplemented!(),
-        _ if opblock & 0x80 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => unimplemented!(),
+        _ if opblock & 0xE0 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => unimplemented!(),
 
         // data processing immediate shift
         0b00000000..=0b00011111 if get_bit(instr, 4) => DataProcessingImmediateShift {

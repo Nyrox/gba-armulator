@@ -53,3 +53,26 @@ macro_rules! hex {
 }
 
 pub use hex;
+
+
+pub struct DebugIsBin<T> {
+    pub inner: T,
+}
+
+impl<T> std::fmt::Debug for DebugIsBin<T>
+where
+    T: std::fmt::Binary,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_fmt(format_args!("0b{:b}", self.inner))
+    }
+}
+
+#[macro_export]
+macro_rules! bin {
+    ($id: ident) => {
+        DebugIsBin { inner: $id }
+    };
+}
+
+pub use bin;

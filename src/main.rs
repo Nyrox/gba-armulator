@@ -16,6 +16,7 @@ pub mod bitutils;
 
 use arm::prelude::*;
 use bitutils::*;
+use arm::instruction;
 
 #[derive(Copy, Clone)]
 struct SmallAsciiString<const N: usize> {
@@ -359,7 +360,17 @@ unsafe fn _main() {
                     }
                     0b01 => unimplemented!(),
                     _ => unreachable!(),
-                },
+                }
+                ConditionalBranch { cond, offset } => {
+                    let passed = match instruction::parse_cond_flags(cond) {
+                        CondFlags::Always => true,
+                        _ => unimplemented!()
+                    };
+
+                    if passed {
+                        *pc = (*pc as i32 + (sign_extend32(offset as u32, 8) << 1)) as u32;
+                    }                    
+                }
                 SWI(immed_8) => {
                     // set up return
                     *registers.index_mut(14, ProcessorMode::Supervisor) = *pc - 2;
@@ -373,6 +384,20 @@ unsafe fn _main() {
                     *pc = 0x08;
                     processor_mode = ProcessorMode::Supervisor;
                     continue;
+                }
+                ShiftByIMmediate { opcode, immediate, rm, rd } => {
+
+
+                    match opcode {
+                        0b00 => {
+                            *registers.index_mut(rd as usize, processor_mode) = *registers.index(rm as usize, processor_mode) << immediate;
+                        },
+                        _ => unimplemented!()
+                    }
+                },
+                LoadWordPCRelative { rd, immed_8 } => {
+                    let addr = (*pc & 0xFFFFFFFE) + immed_8 as u32 * 4;
+                    *registers.index_mut(rd as usize, processor_mode) = *(memory.index(addr).unwrap() as *mut u32);
                 }
                 Mov { h1, h2, rd, rm } => {
                     let rd = (h1 as u8) << 3 | rd;
@@ -432,6 +457,12 @@ unsafe fn _main() {
                 *pc = (*pc as i32 + sign_extend32(signed_immed_24 << 2, 26)) as u32;
                 continue;
             }
+            BranchExchange { rm } => {
+                let addr = *registers.index(rm as usize, processor_mode);
+                cpsr_flags = set_bits(cpsr_flags, 5, 1, get_bit(addr, 0) as u32); // arm state
+                *pc = addr & 0xFFFFFFFE;
+                continue;
+            }
             DataProcessingImmediate {
                 s,
                 opcode,
@@ -445,6 +476,10 @@ unsafe fn _main() {
                     OpCode::MOV => {
                         dbg!(shifter_operand);
                         *registers.index_mut(rd as usize, processor_mode) = shifter_operand;
+                    },
+                    OpCode::ADD => {
+                        if s { unimplemented!() }
+                        *registers.index_mut(rd as usize, processor_mode) = registers.index(rn as usize, processor_mode).wrapping_add(shifter_operand);
                     }
                     _ => unimplemented!(),
                 }
