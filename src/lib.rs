@@ -19,7 +19,7 @@ use arm::prelude::*;
 use bitutils::*;
 
 #[derive(Copy, Clone)]
-struct SmallAsciiString<const N: usize> {
+pub struct SmallAsciiString<const N: usize> {
     data: [u8; N],
 }
 
@@ -58,7 +58,7 @@ fn fmt_bin(v: &u32, fmt: &mut fmt::Formatter) -> fmt::Result {
 #[repr(C)]
 #[derive(Derivative, Clone, Copy)]
 #[derivative(Debug)]
-struct RomHeader {
+pub struct RomHeader {
     #[derivative(Debug(format_with = "fmt_bin"))]
     entry_point: u32,
     #[derivative(Debug = "ignore")]
@@ -77,7 +77,7 @@ struct RomHeader {
     _reserved2: [u8; 2], // should be zero filled
 }
 
-struct Memory {
+pub struct Memory {
     pub system_rom: [u8; 16 * 1024],
     pub wram_256: [u8; 256 * 1024],
     pub wram_32: [u8; 32 * 1024],
@@ -98,7 +98,7 @@ impl std::default::Default for Memory {
 }
 
 #[derive(Debug)]
-enum MemoryError {
+pub enum MemoryError {
     OutOfRange(DebugIsHex<u32>),
 }
 
@@ -154,7 +154,7 @@ impl Memory {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum ProcessorMode {
+pub enum ProcessorMode {
     User,
     FIQ,
     IRQ,
@@ -177,7 +177,7 @@ fn full_bank_index(mode: ProcessorMode) -> usize {
 }
 
 #[derive(Clone, Debug)]
-struct Registers {
+pub struct Registers {
     unbanked: [u32; 8],
     single_banked: [[u32; 5]; 2],
     fully_banked: [[u32; 2]; 6],
@@ -232,7 +232,7 @@ impl Registers {
 }
 
 #[derive(Clone, Copy, Default, Debug)]
-struct SPSR(pub u32);
+pub struct SPSR(pub u32);
 
 impl SPSR {
     fn thumb_mode(&self) -> bool {
@@ -293,7 +293,7 @@ impl SPSR {
 }
 
 #[derive(Clone, Default, Debug)]
-struct SPSRFlags {
+pub struct SPSRFlags {
     supervisor: SPSR,
     irq: SPSR,
     abort: SPSR,
@@ -329,12 +329,12 @@ impl SPSRFlags {
     }
 }
 
-struct Emulator {
+pub struct Emulator {
     pub memory: Box<Memory>,
-    registers: Registers,
-    processor_mode: ProcessorMode,
-    spsr_flags: SPSRFlags,
-    cpsr_flags: SPSR,
+    pub registers: Registers,
+    pub processor_mode: ProcessorMode,
+    pub spsr_flags: SPSRFlags,
+    pub cpsr_flags: SPSR,
 }
 
 impl Emulator {
@@ -720,38 +720,3 @@ impl Emulator {
     }
 }
 
-fn main() {
-    unsafe { _main() }
-}
-
-unsafe fn _main() {
-    // let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
-    // let mut rom = fs:read(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
-    let mut rom = fs::read(r"./armwrestler-gba-fixed.gba").unwrap();
-
-    // load bios
-    // let mut bios = fs::read(r"./gba_bios.bin").unwrap();
-    // assert_eq!(bios.len(), 16 * 1024);
-    // for i in 0..bios.len() {
-    //     *memory.index_mut(i as u32).unwrap() = bios[i];
-    // }
-
-    let mut emulator = Emulator {
-        memory: box Memory::with_rom(rom),
-        registers: Registers::zeroed(),
-        processor_mode: ProcessorMode::User,
-        spsr_flags: SPSRFlags::new(),
-        cpsr_flags: SPSR(0),
-    };
-
-    assert_eq!(mem::size_of::<RomHeader>(), 192);
-    let header = unsafe { *(emulator.memory.rom.as_ptr() as *const RomHeader) };
-
-    println!("{:#?}", header);
-
-    emulator.set_program_counter(0x08000000);
-
-    loop {
-        emulator.step()
-    }
-}

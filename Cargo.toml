@@ -1,5 +1,5 @@
 [package]
-name = "gbarmulator"
+name = "emucore"
 version = "0.1.0"
 authors = ["Nyrox <root@nyrox.tech>"]
 edition = "2018"
