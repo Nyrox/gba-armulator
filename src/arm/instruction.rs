@@ -1,7 +1,5 @@
 use crate::bitutils::*;
 
-
-
 #[derive(Copy, Clone, Debug)]
 pub enum OpCode {
     AND,
@@ -149,11 +147,9 @@ pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
         },
         // rule out misc. instruction
         // branch-exchange
-        0x12 if get_bits(instr, 4, 4) == 1 => {
-            BranchExchange {
-                rm: get_bits(instr, 0, 4) as u8,
-            }
-        }
+        0x12 if get_bits(instr, 4, 4) == 1 => BranchExchange {
+            rm: get_bits(instr, 0, 4) as u8,
+        },
 
         _ if opblock & 0xF9 == 0x10 => unimplemented!(),
         _ if opblock & 0xE0 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => unimplemented!(),

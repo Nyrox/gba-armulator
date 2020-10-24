@@ -54,7 +54,6 @@ macro_rules! hex {
 
 pub use hex;
 
-
 pub struct DebugIsBin<T> {
     pub inner: T,
 }

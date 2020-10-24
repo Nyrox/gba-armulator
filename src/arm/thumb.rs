@@ -5,17 +5,63 @@ pub enum ThumbInstruction {
     Push(bool, u8),
     Pop(bool, u8),
     SWI(u8),
-    ShiftByIMmediate { opcode: u8, immediate: u8, rm: u8, rd: u8 },
-    ConditionalBranch { cond: u8, offset: u8 },
-    BranchLong { h: u8, offset_11: u16 },
-    Mov { h1: bool, h2: bool, rm: u8, rd: u8 },
-    LoadWordPCRelative { rd: u8, immed_8: u8 },
-    LoadStoreHalfwordImmediateOffset { l: bool, offset: u8, rn: u8, rd: u8 },
-    LoadStoreMultipleIncrementAfter { l: bool, rn: u8, register_list: u8 },
-    AddSubtractRegister { is_sub: bool, rm: u8, rn: u8, rd: u8 },
-    AddSubtractImmediate { is_sub: bool, immediate: u8, rn: u8, rd: u8 },
-    AddSubtractCmpMoveImmediate { opcode: u8, rd: u8, immediate: u8 },
-    DataProcessingRegister { opcode: u8, rm: u8, rd: u8 },
+    ShiftByIMmediate {
+        opcode: u8,
+        immediate: u8,
+        rm: u8,
+        rd: u8,
+    },
+    ConditionalBranch {
+        cond: u8,
+        offset: u8,
+    },
+    BranchLong {
+        h: u8,
+        offset_11: u16,
+    },
+    Mov {
+        h1: bool,
+        h2: bool,
+        rm: u8,
+        rd: u8,
+    },
+    LoadWordPCRelative {
+        rd: u8,
+        immed_8: u8,
+    },
+    LoadStoreHalfwordImmediateOffset {
+        l: bool,
+        offset: u8,
+        rn: u8,
+        rd: u8,
+    },
+    LoadStoreMultipleIncrementAfter {
+        l: bool,
+        rn: u8,
+        register_list: u8,
+    },
+    AddSubtractRegister {
+        is_sub: bool,
+        rm: u8,
+        rn: u8,
+        rd: u8,
+    },
+    AddSubtractImmediate {
+        is_sub: bool,
+        immediate: u8,
+        rn: u8,
+        rd: u8,
+    },
+    AddSubtractCmpMoveImmediate {
+        opcode: u8,
+        rd: u8,
+        immediate: u8,
+    },
+    DataProcessingRegister {
+        opcode: u8,
+        rm: u8,
+        rd: u8,
+    },
     Undefined,
 }
 
@@ -50,7 +96,7 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
             immediate: get_bits(instr, 0, 8) as u8,
         },
         0b01000000..=0b01000011 => DataProcessingRegister {
-            opcode: get_bits(instr, 6, 4) as u8 ,
+            opcode: get_bits(instr, 6, 4) as u8,
             rm: get_bits(instr, 3, 3) as u8,
             rd: get_bits(instr, 0, 3) as u8,
         },
