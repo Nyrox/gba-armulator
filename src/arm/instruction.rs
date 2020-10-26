@@ -123,14 +123,11 @@ pub fn parse_cond_flags(cond_flags: u8) -> CondFlags {
     }
 }
 
-pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
+pub fn parse_instruction(instr: u32) -> Option<(CondFlags, Instruction)> {
     use Instruction::*;
 
     let opblock = get_bits(instr, 20, 8);
     let cond_block = get_bits(instr, 28, 4);
-
-    dbg!(hex!(instr));
-    dbg!(bin!(instr));
 
     let cond_flags = parse_cond_flags(cond_block as u8);
 
@@ -208,9 +205,9 @@ pub fn parse_instruction(instr: u32) -> (CondFlags, Instruction) {
         _ => {
             dbg!(hex!(instr));
             dbg!(hex!(opblock));
-            unimplemented!()
+            return None;
         }
     };
 
-    (cond_flags, op)
+    Some((cond_flags, op))
 }

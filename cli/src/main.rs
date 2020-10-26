@@ -1,25 +1,19 @@
 #![feature(box_syntax)]
 
-
 use emucore;
 use emucore::*;
 use std::fs;
-use std::mem;
-use std::io::{stdout, Write};
 use std::io;
+use std::io::{stdin, stdout, Write};
+use std::mem;
 
-use crossterm::{
-    execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-    ExecutableCommand,
-    event,
-};
+use emucore::bitutils::DebugIsHex;
 
 fn main() {
     unsafe { _main() }
 }
 
-unsafe fn _main(){
+unsafe fn _main() {
     // let mut rom = fs::read(r"./roms/Pokemon - Leaf Green Version (U) (V1.1).gba").unwrap();
     // let mut rom = fs:read(r"./roms/Pokemon - Sapphire Version (U) (V1.1).gba").unwrap();
     let mut rom = fs::read(r"./armwrestler-gba-fixed.gba").unwrap();
@@ -42,22 +36,66 @@ unsafe fn _main(){
     assert_eq!(mem::size_of::<RomHeader>(), 192);
     let header = unsafe { *(emulator.memory.rom.as_ptr() as *const RomHeader) };
 
-    println!("{:#?}", header);
+    println!("{:#?}\n\n", header);
 
     emulator.set_program_counter(0x08000000);
 
-	loop {
-		let mut input = String::new();
-		io::stdin().read_line(&mut input).unwrap();
+    loop {
+        let pc = emulator.program_counter();
 
-		match input {
+        print!("\n");
+        print!(
+            "Execution Mode: {}\n",
+            match emulator.cpsr_flags.thumb_mode() {
+                true => "Thumb",
+                false => "ARM",
+            }
+        );
+        match emulator.cpsr_flags.thumb_mode() {
+            true => print!(
+                "Next instruction: {:?}\nParsed: {:#?}\n",
+                hex!(emulator.memory.read_halfword(pc).unwrap()),
+                emulator.fetch_thumb_instruction(pc)
+            ),
+            false => print!(
+                "Next instruction: {:?}\nParsed: {:#?}\n",
+                hex!(emulator.memory.read_word(pc).unwrap()),
+                emulator.fetch_arm_instruction(pc)
+            ),
+        };
 
-			_ => {
-				println!("Unrecognized input");
-				continue;
-			}
-		}
-	}
+        println!();
+        print!("PC: {:?}\n", hex!(pc));
+        print!("Command: ");
+        stdout().flush().unwrap();
+        let mut buf = String::new();
+        stdin().read_line(&mut buf).unwrap();
 
-
+        match &buf.as_str()[..(buf.len() - 2)] {
+            // skip newline
+            "exit" | "quit" | "q" | "stop" => {
+                return;
+            }
+            "step" => {
+                emulator.step();
+            }
+            s if &s[..4] == "step" => {
+                if let Ok(n) = s[4..].trim().parse::<u32>() {
+                    for _ in 0..n {
+                        emulator.step();
+                    }
+                } else {
+                    println!(
+                        "Expected an integer literal after 'step', found: {}",
+                        &s[..4]
+                    );
+                    continue;
+                }
+            }
+            _ => {
+                println!("Unrecognized input");
+                continue;
+            }
+        }
+    }
 }

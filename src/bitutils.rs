@@ -47,7 +47,7 @@ where
 
 #[macro_export]
 macro_rules! hex {
-    ($id: ident) => {
+    ($id: expr) => {
         DebugIsHex { inner: $id }
     };
 }
@@ -69,7 +69,7 @@ where
 
 #[macro_export]
 macro_rules! bin {
-    ($id: ident) => {
+    ($id: expr) => {
         DebugIsBin { inner: $id }
     };
 }

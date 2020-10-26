@@ -119,6 +119,11 @@ impl Memory {
         Ok(unsafe { *(ptr as *const u32) })
     }
 
+    pub fn read_halfword(&self, addr: u32) -> Result<u16, MemoryError> {
+        let ptr = self.index(addr)?;
+        Ok(unsafe { *(ptr as *const u16) })
+    }
+
     pub fn write_word(&mut self, address: u32, word: u32) -> Result<(), MemoryError> {
         let ptr = self.index_mut(address)?;
         unsafe {
@@ -235,59 +240,59 @@ impl Registers {
 pub struct SPSR(pub u32);
 
 impl SPSR {
-    fn thumb_mode(&self) -> bool {
+    pub fn thumb_mode(&self) -> bool {
         get_bit(self.0, 5)
     }
 
-    fn set_thumb_mode(&mut self, t: bool) {
+    pub fn set_thumb_mode(&mut self, t: bool) {
         self.0 = set_bits(self.0, 5, 1, t as u32)
     }
 
-    fn disable_irq_interrupts(&self) -> bool {
+    pub fn disable_irq_interrupts(&self) -> bool {
         get_bit(self.0, 7)
     }
 
-    fn set_disable_irq_interrupts(&mut self, i: bool) {
+    pub fn set_disable_irq_interrupts(&mut self, i: bool) {
         self.0 = set_bits(self.0, 7, 1, i as u32)
     }
 
-    fn disable_fiq_interrupts(&self) -> bool {
+    pub fn disable_fiq_interrupts(&self) -> bool {
         get_bit(self.0, 6)
     }
 
-    fn set_disable_fiq_interrupts(&mut self, f: bool) {
+    pub fn set_disable_fiq_interrupts(&mut self, f: bool) {
         self.0 = set_bits(self.0, 6, 1, f as u32)
     }
 
-    fn carry(&self) -> bool {
+    pub fn carry(&self) -> bool {
         get_bit(self.0, 29)
     }
 
-    fn set_carry(&mut self, c: bool) {
+    pub fn set_carry(&mut self, c: bool) {
         self.0 = set_bits(self.0, 29, 1, c as u32)
     }
 
-    fn negative(&self) -> bool {
+    pub fn negative(&self) -> bool {
         get_bit(self.0, 31)
     }
 
-    fn set_negative(&mut self, n: bool) {
+    pub fn set_negative(&mut self, n: bool) {
         self.0 = set_bits(self.0, 31, 1, n as u32)
     }
 
-    fn zero(&self) -> bool {
+    pub fn zero(&self) -> bool {
         get_bit(self.0, 30)
     }
 
-    fn set_zero(&mut self, z: bool) {
+    pub fn set_zero(&mut self, z: bool) {
         self.0 = set_bits(self.0, 30, 1, z as u32)
     }
 
-    fn overflow(&self) -> bool {
+    pub fn overflow(&self) -> bool {
         get_bit(self.0, 28)
     }
 
-    fn set_overflow(&mut self, o: bool) {
+    pub fn set_overflow(&mut self, o: bool) {
         self.0 = set_bits(self.0, 28, 1, o as u32)
     }
 }
@@ -338,104 +343,108 @@ pub struct Emulator {
 }
 
 impl Emulator {
+    pub fn program_counter(&self) -> u32 {
+        *self.registers.index(15, self.processor_mode)
+    }
     pub fn set_program_counter(&mut self, c: u32) {
         *self.registers.index_mut(15, self.processor_mode) = c;
+    }
+
+    pub fn fetch_thumb_instruction(&self, addr: u32) -> Option<ThumbInstruction> {
+        let instruction = unsafe { *(self.memory.index(addr).unwrap() as *const u16) };
+        parse_thumb_instruction(instruction)
+    }
+
+    pub fn fetch_arm_instruction(&self, addr: u32) -> Option<(CondFlags, Instruction)> {
+        let instruction = unsafe { *(self.memory.index(addr).unwrap() as *const u32) };
+        parse_instruction(instruction)
     }
 
     pub unsafe fn step(&mut self) {
         const LR: usize = 14;
         const SP: usize = 13;
 
-        let registers = &mut self.registers;
-        let memory = &mut self.memory;
-        let cpsr_flags = &mut self.cpsr_flags;
-        let mut spsr_flags = &mut self.spsr_flags;
-        let mut processor_mode = self.processor_mode;
+        let pc = *self.registers.index(15, self.processor_mode);
 
-        let pc = *registers.index(15, processor_mode);
-
-        if cpsr_flags.thumb_mode() {
-            let instruction = unsafe { *(memory.index(pc).unwrap() as *const u16) };
-
-            let _registerPrinted = registers
-                .list(processor_mode)
+        if self.cpsr_flags.thumb_mode() {
+            let _registerPrinted = self
+                .registers
+                .list(self.processor_mode)
                 .iter()
                 .cloned()
                 .map(|e| hex!(e))
                 .collect::<Vec<_>>();
-            dbg!(_registerPrinted);
-            dbg!(hex!(instruction));
-            dbg!(format!("0x{:x}", pc));
 
-            let instruction = parse_thumb_instruction(instruction);
-            dbg!(instruction.clone());
+            let instruction = self.fetch_thumb_instruction(pc).unwrap();
 
-            *registers.index_mut(15, processor_mode) = pc + 4;
-            let pc = *registers.index(15, processor_mode);
+            *self.registers.index_mut(15, self.processor_mode) = pc + 4;
+            let pc = *self.registers.index(15, self.processor_mode);
             use ThumbInstruction::*;
             // do shit
             match instruction {
                 AddSubtractRegister { is_sub, rm, rn, rd } => {
-                    let rnval = *registers.index(rn as usize, processor_mode);
-                    let rmval = *registers.index(rm as usize, processor_mode);
+                    let rnval = *self.registers.index(rn as usize, self.processor_mode);
+                    let rmval = *self.registers.index(rm as usize, self.processor_mode);
 
                     let r = if is_sub {
                         unimplemented!();
                     } else {
                         let r = rnval.wrapping_add(rmval);
-                        cpsr_flags.set_carry(r < rnval || r < rmval);
+                        self.cpsr_flags.set_carry(r < rnval || r < rmval);
                         // TODO: figure out how the fuck to do V
                         r
                     };
 
-                    cpsr_flags.set_negative(get_bit(r, 31));
-                    cpsr_flags.set_zero(r == 0);
+                    self.cpsr_flags.set_negative(get_bit(r, 31));
+                    self.cpsr_flags.set_zero(r == 0);
 
-                    *registers.index_mut(rd as usize, processor_mode) = r;
+                    *self.registers.index_mut(rd as usize, self.processor_mode) = r;
                 }
                 DataProcessingRegister { opcode, rm, rd } => {
                     let r = match opcode {
                         0b1110 => {
                             // BIC
-                            let r = *registers.index(rd as usize, processor_mode)
-                                & (!*registers.index(rm as usize, processor_mode));
-                            *registers.index_mut(rd as usize, processor_mode) = r;
+                            let r = *self.registers.index(rd as usize, self.processor_mode)
+                                & (!*self.registers.index(rm as usize, self.processor_mode));
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = r;
                             r
                         }
                         _ => unimplemented!(),
                     };
 
-                    cpsr_flags.set_negative(get_bit(r, 31));
-                    cpsr_flags.set_zero(r == 0);
+                    self.cpsr_flags.set_negative(get_bit(r, 31));
+                    self.cpsr_flags.set_zero(r == 0);
                 }
                 Push(r_bit, r_list) => {
                     let r_count = r_list.count_ones() + r_bit as u32;
-                    let mut start_address = registers.index(13, processor_mode) - r_count * 4;
+                    let mut start_address =
+                        self.registers.index(13, self.processor_mode) - r_count * 4;
 
                     for i in 0..8 {
                         if get_bit(r_list, i) {
-                            *(memory.index(start_address).unwrap() as *mut u32) =
-                                *registers.index(i as usize, processor_mode);
+                            *(self.memory.index(start_address).unwrap() as *mut u32) =
+                                *self.registers.index(i as usize, self.processor_mode);
                             start_address += 4;
                         }
                     }
                     if r_bit {
-                        *(memory.index(start_address).unwrap() as *mut u32) =
-                            *registers.index(14, processor_mode);
+                        *(self.memory.index(start_address).unwrap() as *mut u32) =
+                            *self.registers.index(14, self.processor_mode);
                     }
 
-                    *registers.index_mut(13, processor_mode) -= 4 * r_count;
+                    *self.registers.index_mut(13, self.processor_mode) -= 4 * r_count;
                 }
                 BranchLong { h, offset_11 } => match h {
                     0b10 => {
-                        *registers.index_mut(14, processor_mode) =
+                        *self.registers.index_mut(14, self.processor_mode) =
                             ((pc as i32) + (sign_extend32(offset_11 as u32, 11) << 12)) as u32;
                     }
                     0b11 => {
                         let _pc = pc;
-                        *registers.index_mut(15, processor_mode) =
-                            *registers.index(14, processor_mode) + (offset_11 << 1) as u32;
-                        *registers.index_mut(14, processor_mode) = _pc - 2;
+                        *self.registers.index_mut(15, self.processor_mode) =
+                            *self.registers.index(14, self.processor_mode)
+                                + (offset_11 << 1) as u32;
+                        *self.registers.index_mut(14, self.processor_mode) = _pc - 2;
                         return;
                     }
                     0b01 => unimplemented!(),
@@ -444,30 +453,30 @@ impl Emulator {
                 ConditionalBranch { cond, offset } => {
                     let passed = match instruction::parse_cond_flags(cond) {
                         CondFlags::Always => true,
-                        CondFlags::CarrySet => cpsr_flags.carry(),
-                        CondFlags::Equal => cpsr_flags.zero(),
-                        CondFlags::NotEqual => !cpsr_flags.zero(),
+                        CondFlags::CarrySet => self.cpsr_flags.carry(),
+                        CondFlags::Equal => self.cpsr_flags.zero(),
+                        CondFlags::NotEqual => !self.cpsr_flags.zero(),
                         c => unimplemented!("{:?}", c),
                     };
 
                     if passed {
-                        *registers.index_mut(15, processor_mode) =
+                        *self.registers.index_mut(15, self.processor_mode) =
                             (pc as i32 + (sign_extend32(offset as u32, 8) << 1)) as u32;
                         return;
                     }
                 }
                 SWI(immed_8) => {
                     // set up return
-                    *registers.index_mut(14, ProcessorMode::Supervisor) = pc - 2;
-                    *spsr_flags.get_for_mut(ProcessorMode::Supervisor) = *cpsr_flags;
+                    *self.registers.index_mut(14, ProcessorMode::Supervisor) = pc - 2;
+                    *self.spsr_flags.get_for_mut(ProcessorMode::Supervisor) = self.cpsr_flags;
 
-                    cpsr_flags.0 = set_bits(cpsr_flags.0, 0, 5, 0b10011); // supervisor mode
-                    cpsr_flags.set_thumb_mode(false);
-                    cpsr_flags.set_disable_irq_interrupts(true);
+                    self.cpsr_flags.0 = set_bits(self.cpsr_flags.0, 0, 5, 0b10011); // supervisor mode
+                    self.cpsr_flags.set_thumb_mode(false);
+                    self.cpsr_flags.set_disable_irq_interrupts(true);
 
                     // TOODO: Figure out high vectors?
-                    *registers.index_mut(15, processor_mode) = 0x08;
-                    processor_mode = ProcessorMode::Supervisor;
+                    *self.registers.index_mut(15, self.processor_mode) = 0x08;
+                    self.processor_mode = ProcessorMode::Supervisor;
                     return;
                 }
                 ShiftByIMmediate {
@@ -477,27 +486,30 @@ impl Emulator {
                     rd,
                 } => match opcode {
                     0b00 => {
-                        let rmval = *registers.index(rm as usize, processor_mode);
-                        *registers.index_mut(rd as usize, processor_mode) = rmval << immediate;
+                        let rmval = *self.registers.index(rm as usize, self.processor_mode);
+                        *self.registers.index_mut(rd as usize, self.processor_mode) =
+                            rmval << immediate;
                         if immediate > 0 {
-                            cpsr_flags.set_carry(get_bit(rmval, 32 - immediate as usize));
+                            self.cpsr_flags
+                                .set_carry(get_bit(rmval, 32 - immediate as usize));
                         }
-                        cpsr_flags.set_negative(get_bit(rmval << immediate, 31));
-                        cpsr_flags.set_zero(rmval << immediate == 0);
+                        self.cpsr_flags
+                            .set_negative(get_bit(rmval << immediate, 31));
+                        self.cpsr_flags.set_zero(rmval << immediate == 0);
                     }
                     _ => unimplemented!(),
                 },
                 LoadWordPCRelative { rd, immed_8 } => {
                     let addr = (pc & 0xFFFFFFFE) + immed_8 as u32 * 4;
-                    *registers.index_mut(rd as usize, processor_mode) =
-                        *(memory.index(addr).unwrap() as *mut u32);
+                    *self.registers.index_mut(rd as usize, self.processor_mode) =
+                        *(self.memory.index(addr).unwrap() as *mut u32);
                 }
                 LoadStoreMultipleIncrementAfter {
                     l,
                     rn,
                     register_list,
                 } => {
-                    let start_address = *registers.index(rn as usize, processor_mode);
+                    let start_address = *self.registers.index(rn as usize, self.processor_mode);
                     let mut address = start_address;
 
                     for i in 0..8 {
@@ -507,12 +519,12 @@ impl Emulator {
 
                         match l {
                             true => {
-                                *registers.index_mut(i as usize, processor_mode) =
-                                    *(memory.index(address).unwrap() as *mut u32)
+                                *self.registers.index_mut(i as usize, self.processor_mode) =
+                                    *(self.memory.index(address).unwrap() as *mut u32)
                             }
                             false => {
-                                *(memory.index(address).unwrap() as *mut u32) =
-                                    *registers.index_mut(i as usize, processor_mode)
+                                *(self.memory.index(address).unwrap() as *mut u32) =
+                                    *self.registers.index_mut(i as usize, self.processor_mode)
                             }
                         }
 
@@ -520,7 +532,7 @@ impl Emulator {
                     }
 
                     if !get_bit(register_list, rn as usize) {
-                        *registers.index_mut(rn as usize, processor_mode) +=
+                        *self.registers.index_mut(rn as usize, self.processor_mode) +=
                             (address - start_address) / 4;
                     }
                 }
@@ -528,8 +540,8 @@ impl Emulator {
                     let rd = (h1 as u8) << 3 | rd;
                     let rm = (h2 as u8) << 3 | rm;
 
-                    *registers.index_mut(rd as usize, processor_mode) =
-                        *registers.index(rm as usize, processor_mode);
+                    *self.registers.index_mut(rd as usize, self.processor_mode) =
+                        *self.registers.index(rm as usize, self.processor_mode);
                 }
                 AddSubtractCmpMoveImmediate {
                     opcode,
@@ -538,26 +550,27 @@ impl Emulator {
                 } => {
                     let r = match opcode {
                         0b00 => {
-                            *registers.index_mut(rd as usize, processor_mode) = immediate as u32;
+                            *self.registers.index_mut(rd as usize, self.processor_mode) =
+                                immediate as u32;
                             immediate as u32
                         }
                         0b11 => {
-                            let rdval = *registers.index(rd as usize, processor_mode);
+                            let rdval = *self.registers.index(rd as usize, self.processor_mode);
                             let r = rdval.wrapping_sub(immediate as u32);
-                            cpsr_flags.set_carry(r > rdval || r > immediate as u32);
-                            *registers.index_mut(rd as usize, processor_mode) = r;
+                            self.cpsr_flags.set_carry(r > rdval || r > immediate as u32);
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = r;
                             r
                         }
                         _ => unimplemented!(),
                     };
 
-                    cpsr_flags.set_negative(get_bit(r, 31));
-                    cpsr_flags.set_zero(r == 0);
+                    self.cpsr_flags.set_negative(get_bit(r, 31));
+                    self.cpsr_flags.set_zero(r == 0);
                 }
                 _ => unimplemented!(),
             }
 
-            *registers.index_mut(15, processor_mode) = pc - 2;
+            *self.registers.index_mut(15, self.processor_mode) = pc - 2;
             return;
         }
 
@@ -565,27 +578,19 @@ impl Emulator {
         //  END OF THUMB MODE
         //
 
-        print!("\n");
-
-        dbg!(*cpsr_flags);
-        let _registers_printed = registers
-            .list(processor_mode)
+        let _registers_printed = self
+            .registers
+            .list(self.processor_mode)
             .iter()
             .cloned()
             .map(|e| hex!(e))
             .collect::<Vec<_>>();
-        dbg!(_registers_printed);
 
-        let instruction = unsafe { *(memory.index(pc).unwrap() as *const u32) };
-        dbg!(hex!(instruction));
-
-        *registers.index_mut(15, processor_mode) = pc + 8;
-        let pc = *registers.index(15, processor_mode);
-
-        dbg!(format!("0x{:x}", (pc) - 8));
-
-        let (cond_flags, instruction) = parse_instruction(instruction);
-        dbg!(instruction);
+            
+            let (cond_flags, instruction) = self.fetch_arm_instruction(pc).unwrap();
+            
+            *self.registers.index_mut(15, self.processor_mode) = pc + 8;
+        let pc = *self.registers.index(15, self.processor_mode);
 
         match cond_flags {
             CondFlags::Always => (),
@@ -599,17 +604,17 @@ impl Emulator {
                 signed_immed_24,
             } => {
                 if link {
-                    *registers.index_mut(LR, processor_mode) = pc - 4;
+                    *self.registers.index_mut(LR, self.processor_mode) = pc - 4;
                 }
-                *registers.index_mut(15, processor_mode) =
+                *self.registers.index_mut(15, self.processor_mode) =
                     (pc as i32 + sign_extend32(signed_immed_24 << 2, 26)) as u32;
                 return;
             }
             BranchExchange { rm } => {
-                let addr = *registers.index(rm as usize, processor_mode);
-                cpsr_flags.set_thumb_mode(get_bit(addr, 0));
+                let addr = *self.registers.index(rm as usize, self.processor_mode);
+                self.cpsr_flags.set_thumb_mode(get_bit(addr, 0));
                 // arm state
-                *registers.index_mut(15, processor_mode) = addr & 0xFFFFFFFE;
+                *self.registers.index_mut(15, self.processor_mode) = addr & 0xFFFFFFFE;
                 return;
             }
             DataProcessingImmediate {
@@ -623,15 +628,16 @@ impl Emulator {
                 let shifter_operand = (immediate as u32).rotate_right(rotate as u32 * 2);
                 match opcode {
                     OpCode::MOV => {
-                        dbg!(shifter_operand);
-                        *registers.index_mut(rd as usize, processor_mode) = shifter_operand;
+                        *self.registers.index_mut(rd as usize, self.processor_mode) =
+                            shifter_operand;
                     }
                     OpCode::ADD => {
                         if s {
                             unimplemented!()
                         }
-                        *registers.index_mut(rd as usize, processor_mode) = registers
-                            .index(rn as usize, processor_mode)
+                        *self.registers.index_mut(rd as usize, self.processor_mode) = self
+                            .registers
+                            .index(rn as usize, self.processor_mode)
                             .wrapping_add(shifter_operand);
                     }
                     _ => unimplemented!(),
@@ -644,11 +650,11 @@ impl Emulator {
                 sbz,
                 rm,
             } => {
-                let operand = *registers.index(rm as usize, processor_mode);
+                let operand = *self.registers.index(rm as usize, self.processor_mode);
                 let psr = if r {
-                    spsr_flags.get_for_mut(processor_mode)
+                    self.spsr_flags.get_for_mut(self.processor_mode)
                 } else {
-                    cpsr_flags
+                    &mut self.cpsr_flags
                 };
 
                 for i in 0..4 {
@@ -680,24 +686,24 @@ impl Emulator {
                 };
 
                 let address = if p {
-                    let base = *registers.index(rn as usize, processor_mode);
+                    let base = *self.registers.index(rn as usize, self.processor_mode);
                     let address = calc_new_addr(base, offset_12 as u32);
 
                     // writeback
                     if w {
-                        *registers.index_mut(rn as usize, processor_mode) = address;
+                        *self.registers.index_mut(rn as usize, self.processor_mode) = address;
                     }
 
                     address
                 } else {
-                    let address = *registers.index(rn as usize, processor_mode);
+                    let address = *self.registers.index(rn as usize, self.processor_mode);
                     if w {
                         unimplemented!()
                     } // unpriviliged access?
 
                     // increment base register
-                    *registers.index_mut(rn as usize, processor_mode) = calc_new_addr(
-                        *registers.index(rn as usize, processor_mode),
+                    *self.registers.index_mut(rn as usize, self.processor_mode) = calc_new_addr(
+                        *self.registers.index(rn as usize, self.processor_mode),
                         offset_12 as u32,
                     );
 
@@ -706,17 +712,16 @@ impl Emulator {
                 };
 
                 if l {
-                    *registers.index_mut(rd as usize, processor_mode) =
-                        memory.read_word(address).unwrap();
+                    *self.registers.index_mut(rd as usize, self.processor_mode) =
+                        self.memory.read_word(address).unwrap();
                 } else {
-                    let val = *registers.index(rd as usize, processor_mode);
-                    memory.write_word(address, val).unwrap();
+                    let val = *self.registers.index(rd as usize, self.processor_mode);
+                    self.memory.write_word(address, val).unwrap();
                 }
             }
             _ => unimplemented!(),
         }
 
-        *registers.index_mut(15, processor_mode) = pc - 4;
+        *self.registers.index_mut(15, self.processor_mode) = pc - 4;
     }
 }
-

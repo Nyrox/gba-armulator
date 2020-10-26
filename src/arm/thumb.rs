@@ -65,13 +65,13 @@ pub enum ThumbInstruction {
     Undefined,
 }
 
-pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
+pub fn parse_thumb_instruction(instr: u16) -> Option<ThumbInstruction> {
     use ThumbInstruction::*;
 
     let opcode = (instr >> 8) as u8;
     let arg_byte = instr as u8;
 
-    match opcode {
+    let instr = match opcode {
         0b00000000..=0b00010111 => ShiftByIMmediate {
             opcode: get_bits(instr, 11, 2) as u8,
             immediate: get_bits(instr, 6, 5) as u8,
@@ -136,6 +136,10 @@ pub fn parse_thumb_instruction(instr: u16) -> ThumbInstruction {
             rm: get_bits(arg_byte, 3, 3),
             rd: get_bits(arg_byte, 0, 3),
         },
-        _ => unimplemented!(),
-    }
+        _ => {
+            return None;
+        }
+    };
+
+    Some(instr)
 }
