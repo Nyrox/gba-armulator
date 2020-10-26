@@ -40,33 +40,44 @@ unsafe fn _main() {
 
     emulator.set_program_counter(0x08000000);
 
+    use std::collections::HashSet;
+    let mut breakpoints: HashSet<u32> = HashSet::new();
+
+    let mut skip_output = false;
+
     loop {
         let pc = emulator.program_counter();
 
-        print!("\n");
-        print!(
-            "Execution Mode: {}\n",
-            match emulator.cpsr_flags.thumb_mode() {
-                true => "Thumb",
-                false => "ARM",
-            }
-        );
-        match emulator.cpsr_flags.thumb_mode() {
-            true => print!(
-                "Next instruction: {:?}\nParsed: {:#?}\n",
-                hex!(emulator.memory.read_halfword(pc).unwrap()),
-                emulator.fetch_thumb_instruction(pc)
-            ),
-            false => print!(
-                "Next instruction: {:?}\nParsed: {:#?}\n",
-                hex!(emulator.memory.read_word(pc).unwrap()),
-                emulator.fetch_arm_instruction(pc)
-            ),
-        };
+        print!("\n\n---\n");
 
-        println!();
-        print!("PC: {:?}\n", hex!(pc));
+        if !skip_output {
+            print!(
+                "Execution Mode: {}\n",
+                match emulator.cpsr_flags.thumb_mode() {
+                    true => "Thumb",
+                    false => "ARM",
+                }
+            );
+            match emulator.cpsr_flags.thumb_mode() {
+                true => print!(
+                    "Next instruction: {:?}\nParsed: {:#?}\n",
+                    hex!(emulator.memory.read_halfword(pc).unwrap()),
+                    emulator.fetch_thumb_instruction(pc)
+                ),
+                false => print!(
+                    "Next instruction: {:?}\nParsed: {:#?}\n",
+                    hex!(emulator.memory.read_word(pc).unwrap()),
+                    emulator.fetch_arm_instruction(pc)
+                ),
+            };
+
+            println!("Breakpoints: {}", breakpoints.len());
+            println!();
+            print!("PC: {:?}\n", hex!(pc));
+        }
         print!("Command: ");
+        skip_output = false;
+
         stdout().flush().unwrap();
         let mut buf = String::new();
         stdin().read_line(&mut buf).unwrap();
@@ -79,20 +90,69 @@ unsafe fn _main() {
             "step" => {
                 emulator.step();
             }
-            s if &s[..4] == "step" => {
+            "status" => {
+                continue;
+            }
+            "breakpoints" => {
+                skip_output = true;
+
+                println!("Breakpoints:");
+                for b in breakpoints.iter() {
+                    println!("\t{:?}", hex!(b));
+                }
+
+                continue;
+            }
+            s if s.starts_with("break") => {
+                skip_output = true;
+
+                let parse = |s: &str| {
+                    if s.starts_with("0x") {
+                        return u32::from_str_radix(&s[2..], 16);
+                    } else if s.starts_with("0b") {
+                        return u32::from_str_radix(&s[2..], 2);
+                    } else {
+                        return s.parse();
+                    }
+                };
+
+                if let Ok(n) = parse(s[5..].trim()) {
+                    if breakpoints.contains(&n) {
+                        breakpoints.remove(&n);
+                        println!("Removed breakpoint: {:?}", hex!(n));
+                    } else {
+                        breakpoints.insert(n);
+                        println!("Added breakpoint: {:?}", hex!(n));
+                    }
+                } else {
+                    println!(
+                        "Expected an integer literal after 'break', found {}",
+                        &s[5..]
+                    );
+                }
+            }
+            s if s.starts_with("step") => {
                 if let Ok(n) = s[4..].trim().parse::<u32>() {
                     for _ in 0..n {
                         emulator.step();
+                        if breakpoints.contains(&emulator.program_counter()) {
+                            println!(
+                                "Encountered breakpoint: [{:?}]",
+                                hex!(emulator.program_counter())
+                            );
+                            break;
+                        }
                     }
                 } else {
                     println!(
                         "Expected an integer literal after 'step', found: {}",
-                        &s[..4]
+                        &s[5..]
                     );
                     continue;
                 }
             }
             _ => {
+                skip_output = true;
                 println!("Unrecognized input");
                 continue;
             }

@@ -7,9 +7,6 @@
 use bytemuck;
 use derivative::Derivative;
 use std::fmt;
-use std::fs;
-use std::io::prelude::*;
-use std::mem;
 
 pub mod arm;
 pub mod bitutils;
@@ -465,7 +462,7 @@ impl Emulator {
                         return;
                     }
                 }
-                SWI(immed_8) => {
+                SWI(_immed_8) => {
                     // set up return
                     *self.registers.index_mut(14, ProcessorMode::Supervisor) = pc - 2;
                     *self.spsr_flags.get_for_mut(ProcessorMode::Supervisor) = self.cpsr_flags;
@@ -586,10 +583,9 @@ impl Emulator {
             .map(|e| hex!(e))
             .collect::<Vec<_>>();
 
-            
-            let (cond_flags, instruction) = self.fetch_arm_instruction(pc).unwrap();
-            
-            *self.registers.index_mut(15, self.processor_mode) = pc + 8;
+        let (cond_flags, instruction) = self.fetch_arm_instruction(pc).unwrap();
+
+        *self.registers.index_mut(15, self.processor_mode) = pc + 8;
         let pc = *self.registers.index(15, self.processor_mode);
 
         match cond_flags {
@@ -646,8 +642,8 @@ impl Emulator {
             MoveRegisterToStatusRegister {
                 r,
                 field_mask,
-                sbo,
-                sbz,
+                sbo: _,
+                sbz: _,
                 rm,
             } => {
                 let operand = *self.registers.index(rm as usize, self.processor_mode);
