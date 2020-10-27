@@ -19,6 +19,11 @@ pub enum ThumbInstruction {
         h: u8,
         offset_11: u16,
     },
+    BranchExchange {
+        link: bool,
+        rm_h2: u8,
+        sbz: u8,
+    },
     Mov {
         h1: bool,
         h2: bool,
@@ -29,7 +34,15 @@ pub enum ThumbInstruction {
         rd: u8,
         immed_8: u8,
     },
+    LoadStoreRegisterOffset { opcode: u8, rm: u8, rn: u8, rd: u8 },
     LoadStoreHalfwordImmediateOffset {
+        l: bool,
+        offset: u8,
+        rn: u8,
+        rd: u8,
+    },
+    LoadStoreWordByteImmediateOffset {
+        b: bool,
         l: bool,
         offset: u8,
         rn: u8,
@@ -98,6 +111,24 @@ pub fn parse_thumb_instruction(instr: u16) -> Option<ThumbInstruction> {
         0b01000000..=0b01000011 => DataProcessingRegister {
             opcode: get_bits(instr, 6, 4) as u8,
             rm: get_bits(instr, 3, 3) as u8,
+            rd: get_bits(instr, 0, 3) as u8,
+        },
+        0b01000111 => BranchExchange {
+            link: get_bit(instr, 7),
+            rm_h2: get_bits(instr, 3, 4) as u8,
+            sbz: get_bits(instr, 0, 3) as u8,
+        },
+        0b01010000..=0b01011111 => LoadStoreRegisterOffset {
+            opcode: get_bits(instr, 9, 3) as u8,
+            rm: get_bits(instr, 6, 3) as u8,
+            rn: get_bits(instr, 3, 3) as u8,
+            rd: get_bits(instr, 0, 3) as u8,
+        },
+        0b01100000..=0b01111111 => LoadStoreWordByteImmediateOffset {
+            b: get_bit(instr, 12),
+            l: get_bit(instr, 11),
+            offset: get_bits(instr, 6, 5) as u8,
+            rn: get_bits(instr, 3, 3) as u8,
             rd: get_bits(instr, 0, 3) as u8,
         },
         0b10110100 => Push(false, arg_byte),

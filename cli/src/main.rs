@@ -91,6 +91,11 @@ unsafe fn _main() {
                 emulator.step();
             }
             "status" => {
+                for i in 0..16 {
+                    println!("R{}: {:?}", i, hex!(*emulator.registers.index(i, emulator.processor_mode)));
+                }
+
+                skip_output = true;
                 continue;
             }
             "breakpoints" => {
@@ -129,6 +134,18 @@ unsafe fn _main() {
                         "Expected an integer literal after 'break', found {}",
                         &s[5..]
                     );
+                }
+            }
+            "continue" => {
+                loop {
+                    emulator.step();
+                    if breakpoints.contains(&emulator.program_counter()) {
+                        println!(
+                            "Encountered breakpoint: [{:?}]",
+                            hex!(emulator.program_counter())
+                        );
+                        break;
+                    }
                 }
             }
             s if s.starts_with("step") => {

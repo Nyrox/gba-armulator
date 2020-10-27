@@ -106,6 +106,9 @@ pub enum CondFlags {
     NotEqual,
     CarrySet,
     CarryClear,
+    Minus,
+    Plus,
+
     Always,
 }
 
@@ -115,6 +118,8 @@ pub fn parse_cond_flags(cond_flags: u8) -> CondFlags {
         0b0001 => CondFlags::NotEqual,
         0b0010 => CondFlags::CarrySet,
         0b0011 => CondFlags::CarryClear,
+        0b0100 => CondFlags::Minus,
+        0b0101 => CondFlags::Plus,
         0b1110 => CondFlags::Always,
         _ => {
             dbg!(hex!(cond_flags));

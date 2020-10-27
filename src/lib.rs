@@ -384,7 +384,9 @@ impl Emulator {
                     let rmval = *self.registers.index(rm as usize, self.processor_mode);
 
                     let r = if is_sub {
-                        unimplemented!();
+                        let r = rnval.wrapping_sub(rmval);
+                        self.cpsr_flags.set_carry(r > rnval || r > rmval);
+                        r
                     } else {
                         let r = rnval.wrapping_add(rmval);
                         self.cpsr_flags.set_carry(r < rnval || r < rmval);
@@ -396,6 +398,15 @@ impl Emulator {
                     self.cpsr_flags.set_zero(r == 0);
 
                     *self.registers.index_mut(rd as usize, self.processor_mode) = r;
+                }
+                BranchExchange { link, rm_h2, sbz } => {
+                    let addr = *self.registers.index(rm_h2 as usize, self.processor_mode);
+                    if link {
+                        *self.registers.index_mut(LR, self.processor_mode) = (pc - 2) | 1;
+                    }
+                    self.cpsr_flags.set_thumb_mode(get_bit(addr, 0));
+                    *self.registers.index_mut(15, self.processor_mode) = addr & 0xFFFFFFFE;
+                    return;
                 }
                 DataProcessingRegister { opcode, rm, rd } => {
                     let r = match opcode {
@@ -441,7 +452,7 @@ impl Emulator {
                         *self.registers.index_mut(15, self.processor_mode) =
                             *self.registers.index(14, self.processor_mode)
                                 + (offset_11 << 1) as u32;
-                        *self.registers.index_mut(14, self.processor_mode) = _pc - 2;
+                        *self.registers.index_mut(14, self.processor_mode) = (_pc - 2) | 1;
                         return;
                     }
                     0b01 => unimplemented!(),
@@ -497,9 +508,29 @@ impl Emulator {
                     _ => unimplemented!(),
                 },
                 LoadWordPCRelative { rd, immed_8 } => {
-                    let addr = (pc & 0xFFFFFFFE) + immed_8 as u32 * 4;
+                    let addr = (pc & 0xFFFFFFFC) + immed_8 as u32 * 4;
                     *self.registers.index_mut(rd as usize, self.processor_mode) =
                         *(self.memory.index(addr).unwrap() as *mut u32);
+                }
+                LoadStoreRegisterOffset { opcode, rm, rd, rn } => {
+                    let address = *self.registers.index(rn as usize, self.processor_mode) + *self.registers.index(rm as usize, self.processor_mode);
+
+                    match opcode {
+                        0b100 => { // LDR(2)
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = self.memory.read_word(address).unwrap();
+                        },
+                        _ => unimplemented!()
+                    }
+                }
+                LoadStoreWordByteImmediateOffset { b, l, offset, rn, rd } => {
+                    if b { unimplemented!() }
+
+                    let address = *self.registers.index(rn as usize, self.processor_mode) + offset as u32 * 4;
+
+                    match l {
+                        true => *self.registers.index_mut(rd as usize, self.processor_mode) = self.memory.read_word(address).unwrap(),
+                        false => self.memory.write_word(address, *self.registers.index(rd as usize, self.processor_mode)).unwrap(),
+                    }
                 }
                 LoadStoreMultipleIncrementAfter {
                     l,
@@ -530,7 +561,7 @@ impl Emulator {
 
                     if !get_bit(register_list, rn as usize) {
                         *self.registers.index_mut(rn as usize, self.processor_mode) +=
-                            (address - start_address) / 4;
+                            address - start_address;
                     }
                 }
                 Mov { h1, h2, rd, rm } => {
