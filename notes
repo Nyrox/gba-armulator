@@ -1,3 +1,3 @@
 
 armwrestler:
-    - runs fine until atleast: 0x80041c0
+    - runs fine until atleast: 0x8000214

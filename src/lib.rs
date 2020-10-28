@@ -492,9 +492,10 @@ impl Emulator {
                     immediate,
                     rm,
                     rd,
-                } => match opcode {
-                    0b00 => {
-                        let rmval = *self.registers.index(rm as usize, self.processor_mode);
+                } => {
+                    let rmval = *self.registers.index(rm as usize, self.processor_mode);
+                    match opcode {
+                    0b00 => { // Logical Shift Left
                         *self.registers.index_mut(rd as usize, self.processor_mode) =
                             rmval << immediate;
                         if immediate > 0 {
@@ -505,8 +506,24 @@ impl Emulator {
                             .set_negative(get_bit(rmval << immediate, 31));
                         self.cpsr_flags.set_zero(rmval << immediate == 0);
                     }
+                    0b10 => { // arithmetic shift right
+                        let r = if immediate == 0 {
+                            self.cpsr_flags.set_carry(get_bit(rmval, 31));
+                            match get_bit(rmval, 31) {
+                                true => 0xFFFFFFFF,
+                                false => 0
+                            }
+                        } else {
+                            use std::mem;
+                            self.cpsr_flags.set_carry(get_bit(rmval, immediate as usize - 1));
+                            mem::transmute(mem::transmute::<_, i32>(rmval).wrapping_shr(immediate as u32))
+                        };
+                        *self.registers.index_mut(rd as usize, self.processor_mode) = r;
+                        self.cpsr_flags.set_negative(get_bit(r, 31));
+                        self.cpsr_flags.set_zero(r == 0);
+                    }
                     _ => unimplemented!(),
-                },
+                }},
                 LoadWordPCRelative { rd, immed_8 } => {
                     let addr = (pc & 0xFFFFFFFC) + immed_8 as u32 * 4;
                     *self.registers.index_mut(rd as usize, self.processor_mode) =
