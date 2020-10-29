@@ -442,6 +442,27 @@ impl Emulator {
 
                     *self.registers.index_mut(13, self.processor_mode) -= 4 * r_count;
                 }
+                Pop(r_bit, r_list) => {
+                    let r_count = r_list.count_ones() + r_bit as u32;
+                    let mut start_address = *self.registers.index(13, self.processor_mode);
+
+                    for i in 0..8 {
+                        if get_bit(r_list, i) {
+                            *self.registers.index_mut(i as usize, self.processor_mode) =
+                                *(self.memory.index(start_address).unwrap() as *mut u32);
+                            start_address += 4;
+                        }
+                    }
+                    if r_bit {
+                        let addr = *(self.memory.index(start_address).unwrap() as *mut u32);
+                        *self.registers.index_mut(15, self.processor_mode) = addr & 0xFFFFFFFE;
+                        self.cpsr_flags.set_thumb_mode(get_bit(addr, 0));
+
+                        return;
+                    }
+
+                    *self.registers.index_mut(13, self.processor_mode) += 4 * r_count;
+                }
                 BranchLong { h, offset_11 } => match h {
                     0b10 => {
                         *self.registers.index_mut(14, self.processor_mode) =
@@ -495,58 +516,97 @@ impl Emulator {
                 } => {
                     let rmval = *self.registers.index(rm as usize, self.processor_mode);
                     match opcode {
-                    0b00 => { // Logical Shift Left
-                        *self.registers.index_mut(rd as usize, self.processor_mode) =
-                            rmval << immediate;
-                        if immediate > 0 {
-                            self.cpsr_flags
-                                .set_carry(get_bit(rmval, 32 - immediate as usize));
-                        }
-                        self.cpsr_flags
-                            .set_negative(get_bit(rmval << immediate, 31));
-                        self.cpsr_flags.set_zero(rmval << immediate == 0);
-                    }
-                    0b10 => { // arithmetic shift right
-                        let r = if immediate == 0 {
-                            self.cpsr_flags.set_carry(get_bit(rmval, 31));
-                            match get_bit(rmval, 31) {
-                                true => 0xFFFFFFFF,
-                                false => 0
+                        0b00 => {
+                            // Logical Shift Left
+                            *self.registers.index_mut(rd as usize, self.processor_mode) =
+                                rmval << immediate;
+                            if immediate > 0 {
+                                self.cpsr_flags
+                                    .set_carry(get_bit(rmval, 32 - immediate as usize));
                             }
-                        } else {
-                            use std::mem;
-                            self.cpsr_flags.set_carry(get_bit(rmval, immediate as usize - 1));
-                            mem::transmute(mem::transmute::<_, i32>(rmval).wrapping_shr(immediate as u32))
-                        };
-                        *self.registers.index_mut(rd as usize, self.processor_mode) = r;
-                        self.cpsr_flags.set_negative(get_bit(r, 31));
-                        self.cpsr_flags.set_zero(r == 0);
+                            self.cpsr_flags
+                                .set_negative(get_bit(rmval << immediate, 31));
+                            self.cpsr_flags.set_zero(rmval << immediate == 0);
+                        }
+                        0b01 => { // Logical shift right
+                            let r = if immediate > 0 {
+                                self.cpsr_flags.set_carry(get_bit(rmval, immediate as usize - 1));
+                                rmval >> immediate
+                            } else {
+                                self.cpsr_flags.set_carry(get_bit(rmval, 31));
+                                0
+                            };
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = r;
+                            self.cpsr_flags.set_zero(r == 0);
+                            self.cpsr_flags.set_negative(get_bit(r, 31));
+                        }
+                        0b10 => {
+                            // arithmetic shift right
+                            let r = if immediate == 0 {
+                                self.cpsr_flags.set_carry(get_bit(rmval, 31));
+                                match get_bit(rmval, 31) {
+                                    true => 0xFFFFFFFF,
+                                    false => 0,
+                                }
+                            } else {
+                                use std::mem;
+                                self.cpsr_flags
+                                    .set_carry(get_bit(rmval, immediate as usize - 1));
+                                mem::transmute(
+                                    mem::transmute::<_, i32>(rmval).wrapping_shr(immediate as u32),
+                                )
+                            };
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = r;
+                            self.cpsr_flags.set_negative(get_bit(r, 31));
+                            self.cpsr_flags.set_zero(r == 0);
+                        }
+                        _ => unimplemented!(),
                     }
-                    _ => unimplemented!(),
-                }},
+                }
                 LoadWordPCRelative { rd, immed_8 } => {
                     let addr = (pc & 0xFFFFFFFC) + immed_8 as u32 * 4;
                     *self.registers.index_mut(rd as usize, self.processor_mode) =
                         *(self.memory.index(addr).unwrap() as *mut u32);
                 }
                 LoadStoreRegisterOffset { opcode, rm, rd, rn } => {
-                    let address = *self.registers.index(rn as usize, self.processor_mode) + *self.registers.index(rm as usize, self.processor_mode);
+                    let address = *self.registers.index(rn as usize, self.processor_mode)
+                        + *self.registers.index(rm as usize, self.processor_mode);
 
                     match opcode {
-                        0b100 => { // LDR(2)
-                            *self.registers.index_mut(rd as usize, self.processor_mode) = self.memory.read_word(address).unwrap();
-                        },
-                        _ => unimplemented!()
+                        0b100 => {
+                            // LDR(2)
+                            *self.registers.index_mut(rd as usize, self.processor_mode) =
+                                self.memory.read_word(address).unwrap();
+                        }
+                        _ => unimplemented!(),
                     }
                 }
-                LoadStoreWordByteImmediateOffset { b, l, offset, rn, rd } => {
-                    if b { unimplemented!() }
+                LoadStoreWordByteImmediateOffset {
+                    b,
+                    l,
+                    offset,
+                    rn,
+                    rd,
+                } => {
+                    if b {
+                        unimplemented!()
+                    }
 
-                    let address = *self.registers.index(rn as usize, self.processor_mode) + offset as u32 * 4;
+                    let address =
+                        *self.registers.index(rn as usize, self.processor_mode) + offset as u32 * 4;
 
                     match l {
-                        true => *self.registers.index_mut(rd as usize, self.processor_mode) = self.memory.read_word(address).unwrap(),
-                        false => self.memory.write_word(address, *self.registers.index(rd as usize, self.processor_mode)).unwrap(),
+                        true => {
+                            *self.registers.index_mut(rd as usize, self.processor_mode) =
+                                self.memory.read_word(address).unwrap()
+                        }
+                        false => self
+                            .memory
+                            .write_word(
+                                address,
+                                *self.registers.index(rd as usize, self.processor_mode),
+                            )
+                            .unwrap(),
                     }
                 }
                 LoadStoreMultipleIncrementAfter {
@@ -593,14 +653,24 @@ impl Emulator {
                     rd,
                     immediate,
                 } => {
+                    let rdval = *self.registers.index(rd as usize, self.processor_mode);
                     let r = match opcode {
-                        0b00 => {
+                        0b00 => { // mov
                             *self.registers.index_mut(rd as usize, self.processor_mode) =
                                 immediate as u32;
                             immediate as u32
                         }
-                        0b11 => {
-                            let rdval = *self.registers.index(rd as usize, self.processor_mode);
+                        0b01 => { // Cmp (1)
+                            
+                            rdval.wrapping_sub(immediate as u32)
+                        }
+                        0b10 => { // Add (2)
+                            let r = rdval.wrapping_add(immediate as u32);
+                            self.cpsr_flags.set_carry(r < immediate as u32 || r < rdval);
+                            *self.registers.index_mut(rd as usize, self.processor_mode) = r;
+                            r
+                        }
+                        0b11 => { // sub
                             let r = rdval.wrapping_sub(immediate as u32);
                             self.cpsr_flags.set_carry(r > rdval || r > immediate as u32);
                             *self.registers.index_mut(rd as usize, self.processor_mode) = r;

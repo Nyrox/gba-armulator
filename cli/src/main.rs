@@ -92,7 +92,11 @@ unsafe fn _main() {
             }
             "status" => {
                 for i in 0..16 {
-                    println!("R{}: {:?}", i, hex!(*emulator.registers.index(i, emulator.processor_mode)));
+                    println!(
+                        "R{}: {:?}",
+                        i,
+                        hex!(*emulator.registers.index(i, emulator.processor_mode))
+                    );
                 }
 
                 skip_output = true;
@@ -136,18 +140,16 @@ unsafe fn _main() {
                     );
                 }
             }
-            "continue" => {
-                loop {
-                    emulator.step();
-                    if breakpoints.contains(&emulator.program_counter()) {
-                        println!(
-                            "Encountered breakpoint: [{:?}]",
-                            hex!(emulator.program_counter())
-                        );
-                        break;
-                    }
+            "continue" => loop {
+                emulator.step();
+                if breakpoints.contains(&emulator.program_counter()) {
+                    println!(
+                        "Encountered breakpoint: [{:?}]",
+                        hex!(emulator.program_counter())
+                    );
+                    break;
                 }
-            }
+            },
             s if s.starts_with("step") => {
                 if let Ok(n) = s[4..].trim().parse::<u32>() {
                     for _ in 0..n {

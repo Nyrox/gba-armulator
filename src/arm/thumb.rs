@@ -34,7 +34,12 @@ pub enum ThumbInstruction {
         rd: u8,
         immed_8: u8,
     },
-    LoadStoreRegisterOffset { opcode: u8, rm: u8, rn: u8, rd: u8 },
+    LoadStoreRegisterOffset {
+        opcode: u8,
+        rm: u8,
+        rn: u8,
+        rd: u8,
+    },
     LoadStoreHalfwordImmediateOffset {
         l: bool,
         offset: u8,
@@ -156,7 +161,7 @@ pub fn parse_thumb_instruction(instr: u16) -> Option<ThumbInstruction> {
             offset: get_bits(instr, 0, 8) as u8,
         },
         // BL, BLX
-        0b11100000..0b11111111 => BranchLong {
+        0b11100000..=0b11111111 => BranchLong {
             h: get_bits(instr, 11, 2) as u8,
             offset_11: get_bits(instr, 0, 11) as u16,
         },
