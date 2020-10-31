@@ -7,15 +7,34 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'emulatorini'",
+            "name": "Debug unit tests in library 'emucore'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=emucore"
+                ],
+                "filter": {
+                    "name": "emucore",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'cli'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=emulatorini",
-                    "--package=emulatorini"
+                    "--bin=cli",
+                    "--package=cli"
                 ],
                 "filter": {
-                    "name": "emulatorini",
+                    "name": "cli",
                     "kind": "bin"
                 }
             },
@@ -25,16 +44,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'emulatorini'",
+            "name": "Debug unit tests in executable 'cli'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=emulatorini",
-                    "--package=emulatorini"
+                    "--bin=cli",
+                    "--package=cli"
                 ],
                 "filter": {
-                    "name": "emulatorini",
+                    "name": "cli",
                     "kind": "bin"
                 }
             },

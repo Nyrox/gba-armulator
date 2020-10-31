@@ -153,8 +153,8 @@ pub fn parse_instruction(instr: u32) -> Option<(CondFlags, Instruction)> {
             rm: get_bits(instr, 0, 4) as u8,
         },
 
-        _ if opblock & 0xF9 == 0x10 => unimplemented!(),
-        _ if opblock & 0xE0 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => unimplemented!(),
+        _ if opblock & 0xF9 == 0x10 => None?,
+        _ if opblock & 0xE0 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => None?,
 
         // data processing immediate shift
         0b00000000..=0b00011111 if get_bit(instr, 4) => DataProcessingImmediateShift {

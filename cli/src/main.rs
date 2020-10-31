@@ -142,6 +142,7 @@ unsafe fn _main() {
             }
             "continue" => loop {
                 emulator.step();
+
                 if breakpoints.contains(&emulator.program_counter()) {
                     println!(
                         "Encountered breakpoint: [{:?}]",

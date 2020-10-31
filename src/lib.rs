@@ -364,14 +364,6 @@ impl Emulator {
         let pc = *self.registers.index(15, self.processor_mode);
 
         if self.cpsr_flags.thumb_mode() {
-            let _registerPrinted = self
-                .registers
-                .list(self.processor_mode)
-                .iter()
-                .cloned()
-                .map(|e| hex!(e))
-                .collect::<Vec<_>>();
-
             let instruction = self.fetch_thumb_instruction(pc).unwrap();
 
             *self.registers.index_mut(15, self.processor_mode) = pc + 4;
@@ -410,6 +402,10 @@ impl Emulator {
                 }
                 DataProcessingRegister { opcode, rm, rd } => {
                     let r = match opcode {
+                        0b1010 => {
+                            let r = self.registers.index(rd as usize, self.processor_mode).wrapping_sub(*self.registers.index(rm as usize, self.processor_mode));
+                            r
+                        }
                         0b1110 => {
                             // BIC
                             let r = *self.registers.index(rd as usize, self.processor_mode)
@@ -692,14 +688,6 @@ impl Emulator {
         //
         //  END OF THUMB MODE
         //
-
-        let _registers_printed = self
-            .registers
-            .list(self.processor_mode)
-            .iter()
-            .cloned()
-            .map(|e| hex!(e))
-            .collect::<Vec<_>>();
 
         let (cond_flags, instruction) = self.fetch_arm_instruction(pc).unwrap();
 
