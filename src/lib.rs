@@ -79,6 +79,8 @@ pub struct Memory {
     pub wram_256: [u8; 256 * 1024],
     pub wram_32: [u8; 32 * 1024],
     pub io_regs: [u8; 16 * 1024],
+    pub palette_ram: [u8; 1 * 1024],
+    pub vram: [u8; 96 * 1024],
     pub rom: Vec<u8>,
 }
 
@@ -89,6 +91,8 @@ impl std::default::Default for Memory {
             wram_256: [0; 256 * 1024],
             wram_32: [0; 32 * 1024],
             io_regs: [0; 16 * 1024],
+            palette_ram: [0; 1 * 1024],
+            vram: [0; 96 * 1024],
             rom: Vec::new(),
         }
     }
@@ -129,6 +133,14 @@ impl Memory {
         Ok(())
     }
 
+    pub fn write_halfword(&mut self, address: u32, halfword: u16) -> Result<(), MemoryError> {
+        let ptr = self.index_mut(address)?;
+        unsafe {
+            *(ptr as *mut u16) = halfword;
+        }
+        Ok(())
+    }
+
     pub fn index(&self, address: u32) -> Result<*const u8, MemoryError> {
         unsafe {
             match address {
@@ -141,6 +153,12 @@ impl Memory {
                 }
                 0x04000000..=0x04000FFF => {
                     Ok(self.io_regs.as_ptr().offset(address as isize - 0x04000000))
+                }
+                0x05000000..=0x050003FF => {
+                    Ok(self.palette_ram.as_ptr().offset(address as isize - 0x05000000))
+                }
+                0x06000000..=0x06017FFF => {
+                    Ok(self.vram.as_ptr().offset(address as isize - 0x06000000))
                 }
                 0x08000000..=0x09FFFFFF => {
                     Ok(self.rom.as_ptr().offset(address as isize - 0x08000000))
@@ -357,6 +375,26 @@ impl Emulator {
         parse_instruction(instruction)
     }
 
+    // Addressing Mode 2/3
+    // given a base, an offset and the u, p, w flags of an arm load/store instruction
+    // returns the address to load/store from and the address to write back
+    // no writeback returning base
+    fn calculate_loadstore_address(
+        base: u32,
+        offset: u32,
+        u: bool,
+        p: bool,
+        w: bool,
+    ) -> (u32, u32) {
+        let applied_addr = if u { base + offset } else { base - offset };
+
+        if p {
+            (applied_addr, if w { applied_addr } else { base })
+        } else {
+            (base, applied_addr)
+        }
+    }
+
     pub unsafe fn step(&mut self) {
         const LR: usize = 14;
         const SP: usize = 13;
@@ -403,7 +441,12 @@ impl Emulator {
                 DataProcessingRegister { opcode, rm, rd } => {
                     let r = match opcode {
                         0b1010 => {
-                            let r = self.registers.index(rd as usize, self.processor_mode).wrapping_sub(*self.registers.index(rm as usize, self.processor_mode));
+                            let r = self
+                                .registers
+                                .index(rd as usize, self.processor_mode)
+                                .wrapping_sub(
+                                    *self.registers.index(rm as usize, self.processor_mode),
+                                );
                             r
                         }
                         0b1110 => {
@@ -524,9 +567,11 @@ impl Emulator {
                                 .set_negative(get_bit(rmval << immediate, 31));
                             self.cpsr_flags.set_zero(rmval << immediate == 0);
                         }
-                        0b01 => { // Logical shift right
+                        0b01 => {
+                            // Logical shift right
                             let r = if immediate > 0 {
-                                self.cpsr_flags.set_carry(get_bit(rmval, immediate as usize - 1));
+                                self.cpsr_flags
+                                    .set_carry(get_bit(rmval, immediate as usize - 1));
                                 rmval >> immediate
                             } else {
                                 self.cpsr_flags.set_carry(get_bit(rmval, 31));
@@ -651,22 +696,26 @@ impl Emulator {
                 } => {
                     let rdval = *self.registers.index(rd as usize, self.processor_mode);
                     let r = match opcode {
-                        0b00 => { // mov
+                        0b00 => {
+                            // mov
                             *self.registers.index_mut(rd as usize, self.processor_mode) =
                                 immediate as u32;
                             immediate as u32
                         }
-                        0b01 => { // Cmp (1)
-                            
+                        0b01 => {
+                            // Cmp (1)
+
                             rdval.wrapping_sub(immediate as u32)
                         }
-                        0b10 => { // Add (2)
+                        0b10 => {
+                            // Add (2)
                             let r = rdval.wrapping_add(immediate as u32);
                             self.cpsr_flags.set_carry(r < immediate as u32 || r < rdval);
                             *self.registers.index_mut(rd as usize, self.processor_mode) = r;
                             r
                         }
-                        0b11 => { // sub
+                        0b11 => {
+                            // sub
                             let r = rdval.wrapping_sub(immediate as u32);
                             self.cpsr_flags.set_carry(r > rdval || r > immediate as u32);
                             *self.registers.index_mut(rd as usize, self.processor_mode) = r;
@@ -779,39 +828,18 @@ impl Emulator {
                     unimplemented!()
                 } // byte access
 
-                let calc_new_addr = |base, offset: u32| {
-                    if u {
-                        base + offset
-                    } else {
-                        base - offset
-                    }
-                };
+                // unpriviliged access or smth.
+                if !p && w {
+                    unimplemented!()
+                }
 
-                let address = if p {
-                    let base = *self.registers.index(rn as usize, self.processor_mode);
-                    let address = calc_new_addr(base, offset_12 as u32);
-
-                    // writeback
-                    if w {
-                        *self.registers.index_mut(rn as usize, self.processor_mode) = address;
-                    }
-
-                    address
-                } else {
-                    let address = *self.registers.index(rn as usize, self.processor_mode);
-                    if w {
-                        unimplemented!()
-                    } // unpriviliged access?
-
-                    // increment base register
-                    *self.registers.index_mut(rn as usize, self.processor_mode) = calc_new_addr(
-                        *self.registers.index(rn as usize, self.processor_mode),
-                        offset_12 as u32,
-                    );
-
-                    // ret old address
-                    address
-                };
+                let (address, writeback) = Self::calculate_loadstore_address(
+                    *self.registers.index(rn as usize, self.processor_mode),
+                    offset_12 as u32,
+                    u,
+                    p,
+                    w,
+                );
 
                 if l {
                     *self.registers.index_mut(rd as usize, self.processor_mode) =
@@ -820,6 +848,35 @@ impl Emulator {
                     let val = *self.registers.index(rd as usize, self.processor_mode);
                     self.memory.write_word(address, val).unwrap();
                 }
+
+                *self.registers.index_mut(rn as usize, self.processor_mode) = writeback;
+            }
+            LoadStoreHalfwordImmediateOffset {
+                p, u, w, l,
+                rn, rd, hi_offset, lo_offset
+            } => {
+                // unpriviliged access or smth.
+                if !p && w {
+                    panic!("UNPREDICTABLE");
+                }
+
+                let (address, writeback) = Self::calculate_loadstore_address(
+                    *self.registers.index(rn as usize, self.processor_mode),
+                    (hi_offset << 4 | lo_offset) as u32,
+                    u,
+                    p,
+                    w,
+                );
+
+                if l {
+                    *self.registers.index_mut(rd as usize, self.processor_mode) =
+                        self.memory.read_halfword(address).unwrap() as u32;
+                } else {
+                    let val = *self.registers.index(rd as usize, self.processor_mode) as u16;
+                    self.memory.write_halfword(address, val).unwrap();
+                }
+
+                *self.registers.index_mut(rn as usize, self.processor_mode) = writeback;
             }
             _ => unimplemented!(),
         }

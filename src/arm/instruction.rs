@@ -98,6 +98,25 @@ pub enum Instruction {
         rd: u8,
         offset_12: u16,
     },
+    LoadStoreHalfwordRegisterOffset {
+        p: bool,
+        u: bool,
+        w: bool,
+        l: bool,
+        rn: u8,
+        rd: u8,
+        rm: u8,
+    },
+    LoadStoreHalfwordImmediateOffset {
+        p: bool,
+        u: bool,
+        w: bool,
+        l: bool,
+        rn: u8,
+        rd: u8,
+        hi_offset: u8,
+        lo_offset: u8,
+    },
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -154,6 +173,29 @@ pub fn parse_instruction(instr: u32) -> Option<(CondFlags, Instruction)> {
         },
 
         _ if opblock & 0xF9 == 0x10 => None?,
+        _ if opblock & 0xE0 == 0x0 && get_bits(instr, 4, 4) == 0b1011 && !get_bit(instr, 22) => {
+            LoadStoreHalfwordRegisterOffset {
+                p: get_bit(instr, 24),
+                u: get_bit(instr, 23),
+                w: get_bit(instr, 21),
+                l: get_bit(instr, 20),
+                rn: get_bits(instr, 16, 4) as u8,
+                rd: get_bits(instr, 12, 4) as u8,
+                rm: get_bits(instr, 0, 4) as u8,
+            }
+        }
+        _ if opblock & 0xE0 == 0x0 && get_bits(instr, 4, 4) == 0b1011 && get_bit(instr, 22) => {
+            LoadStoreHalfwordImmediateOffset {
+                p: get_bit(instr, 24),
+                u: get_bit(instr, 23),
+                w: get_bit(instr, 21),
+                l: get_bit(instr, 20),
+                rn: get_bits(instr, 16, 4) as u8,
+                rd: get_bits(instr, 12, 4) as u8,
+                hi_offset: get_bits(instr, 8, 4) as u8,
+                lo_offset: get_bits(instr, 0, 4) as u8,
+            }
+        }
         _ if opblock & 0xE0 == 0x0 && get_bit(instr, 4) && get_bit(instr, 7) => None?,
 
         // data processing immediate shift
