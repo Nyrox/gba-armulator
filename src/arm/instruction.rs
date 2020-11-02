@@ -116,7 +116,16 @@ pub enum Instruction {
         rd: u8,
         hi_offset: u8,
         lo_offset: u8,
-    },
+	},
+	LoadStoreMultiple {
+		p: bool,
+		u: bool,
+		s: bool,
+		w: bool,
+		l: bool,
+		rn: u8,
+		register_list: u16,
+	}
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -242,7 +251,15 @@ pub fn parse_instruction(instr: u32) -> Option<(CondFlags, Instruction)> {
             rd: get_bits(instr, 12, 4) as u8,
             offset_12: get_bits(instr, 0, 12) as u16,
         },
-
+		0b10000000..=0b10011111 => Instruction::LoadStoreMultiple {
+			p: get_bit(instr, 24),
+			u: get_bit(instr, 23),
+			s: get_bit(instr, 22),
+			w: get_bit(instr, 21),
+			l: get_bit(instr, 20),
+			rn: get_bits(instr, 16, 4) as u8,
+			register_list: get_bits(instr, 0, 16) as u16,
+		},
         // branches
         0b10100000..=0b10111111 => Branch {
             link: get_bit(instr, 24),

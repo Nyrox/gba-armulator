@@ -877,7 +877,10 @@ impl Emulator {
                 }
 
                 *self.registers.index_mut(rn as usize, self.processor_mode) = writeback;
-            }
+			}
+			Instruction::LoadStoreMultiple { p, u, s, w, l, rn, register_list } => {
+				unimplemented!()
+			}
             _ => unimplemented!(),
         }
 
